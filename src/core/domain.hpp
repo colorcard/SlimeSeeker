@@ -20,6 +20,7 @@ constexpr uint64_t kLcgMul = 0x5DEECE66DULL;
 constexpr uint64_t kLcgAdd = 0xBULL;
 constexpr uint64_t kLcgMask = (1ULL << 48) - 1;
 constexpr uint64_t kChunkXor = 987234911ULL;
+constexpr uint32_t kNextInt10Limit = 0x80000000u - (0x80000000u % 10u);
 
 // 17×17 圆环按“行内连续区间”压缩为 20 段，SAT 查询时每段只需四次读取。
 struct Run { uint8_t row, first, last; };
@@ -46,16 +47,17 @@ constexpr int64_t chunk_seed(int64_t seed, int32_t x, int32_t z) {
     return static_cast<int64_t>((zbase(seed, z) + xterm(x)) ^ kChunkXor);
 }
 
-// 该函数位于头文件中，保证每个区块都会调用的 LCG 热路径可被后端直接内联。
-// rejection 尾部概率极低，但必须保留循环以逐位兼容 java.util.Random.nextInt(10)。
+// 极低概率的 rejection 重试放在非内联冷路径，避免污染每个区块都执行的常见路径。
+bool next_int10_retry(uint64_t rejected_state);
+
+// 该函数位于头文件中，保证每个区块都会调用的一次 LCG、取高位和取模可被后端内联。
+// 只有 2^31 个候选值中的最后 8 个需要重试，仍严格兼容 java.util.Random.nextInt(10)。
 inline bool is_slime_from_chunk_seed(int64_t chunk_seed_value) {
     uint64_t state = (static_cast<uint64_t>(chunk_seed_value) ^ kLcgMul) & kLcgMask;
-    for (;;) {
-        state = (state * kLcgMul + kLcgAdd) & kLcgMask;
-        const uint32_t bits = static_cast<uint32_t>(state >> 17);
-        const uint32_t value = bits % 10u;
-        if (bits - value + 9u < 0x80000000u) return value == 0;
-    }
+    state = (state * kLcgMul + kLcgAdd) & kLcgMask;
+    const uint32_t bits = static_cast<uint32_t>(state >> 17);
+    if (bits < kNextInt10Limit) return bits % 10u == 0;
+    return next_int10_retry(state);
 }
 inline bool is_slime(int64_t seed, int32_t x, int32_t z) {
     return is_slime_from_chunk_seed(chunk_seed(seed, x, z));

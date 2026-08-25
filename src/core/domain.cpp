@@ -9,6 +9,21 @@
 
 namespace ss {
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline, cold))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+bool next_int10_retry(uint64_t rejected_state) {
+    // 入口状态已经产生过一次被拒绝的 31 位值；从下一次 LCG 状态继续，不能重新播种。
+    uint64_t state = rejected_state;
+    for (;;) {
+        state = (state * kLcgMul + kLcgAdd) & kLcgMask;
+        const uint32_t bits = static_cast<uint32_t>(state >> 17);
+        if (bits < kNextInt10Limit) return bits % 10u == 0;
+    }
+}
+
 bool in_donut(int dx, int dz) {
     const int distance2 = dx * dx + dz * dz;
     return distance2 > 1 && distance2 <= 64;

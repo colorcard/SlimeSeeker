@@ -30,6 +30,16 @@ unsigned naive_count(int64_t seed, int32_t x, int32_t z) {
     return count;
 }
 
+bool reference_slime_from_chunk_seed(int64_t chunk_seed) {
+    uint64_t state = (static_cast<uint64_t>(chunk_seed) ^ ss::kLcgMul) & ss::kLcgMask;
+    for (;;) {
+        state = (state * ss::kLcgMul + ss::kLcgAdd) & ss::kLcgMask;
+        const uint32_t bits = static_cast<uint32_t>(state >> 17);
+        const uint32_t value = bits % 10u;
+        if (bits - value + 9u < 0x80000000u) return value == 0;
+    }
+}
+
 int collect(void *opaque, const ss_result *results, size_t count) {
     auto &out = *static_cast<std::vector<ss_result> *>(opaque);
     out.insert(out.end(), results, results + count);
@@ -75,6 +85,22 @@ void test_seed_decomposition() {
         expected += static_cast<uint64_t>(static_cast<int64_t>(t4));
         expected ^= ss::kChunkXor;
         CHECK(static_cast<uint64_t>(ss::chunk_seed(seed, x, z)) == expected);
+    }
+}
+
+void test_next_int10_rejection_path() {
+    // 逆向构造第一次输出为拒绝区间起点的状态，确保冷路径不是仅靠随机测试覆盖。
+    constexpr uint64_t inverse_multiplier = 0xDFE05BCB1365ULL;
+    constexpr uint64_t rejected_next_state = static_cast<uint64_t>(ss::kNextInt10Limit) << 17;
+    constexpr uint64_t initial_state =
+        ((rejected_next_state - ss::kLcgAdd) * inverse_multiplier) & ss::kLcgMask;
+    constexpr int64_t chunk_seed = static_cast<int64_t>(initial_state ^ ss::kLcgMul);
+    CHECK(ss::is_slime_from_chunk_seed(chunk_seed) == reference_slime_from_chunk_seed(chunk_seed));
+
+    std::mt19937_64 random(0x10EAC7ULL);
+    for (int i = 0; i < 10000; ++i) {
+        const auto value = static_cast<int64_t>(random());
+        CHECK(ss::is_slime_from_chunk_seed(value) == reference_slime_from_chunk_seed(value));
     }
 }
 
@@ -152,6 +178,7 @@ void test_control_contracts() {
 int main() {
     test_geometry();
     test_seed_decomposition();
+    test_next_int10_rejection_path();
     test_differential_search();
     test_threads_and_backends();
     test_api_validation();
