@@ -7,12 +7,11 @@
 #include "backends/backend.hpp"
 #include "core/domain.hpp"
 #include <arm_neon.h>
-#include <vector>
 
 namespace ss {
 
-void build_map_neon(int64_t seed, int32_t x0, int32_t z0, int width, int height, uint8_t *out) {
-    std::vector<uint64_t> xt(static_cast<size_t>(width));
+void build_map_neon(int64_t seed, int32_t x0, int32_t z0, int width, int height,
+                    uint8_t *out, uint64_t *xt) {
     int x = 0;
     const int32x4_t offsets = {0, 1, 2, 3};
     for (; x + 4 <= width; x += 4) {
@@ -24,16 +23,16 @@ void build_map_neon(int64_t seed, int32_t x0, int32_t z0, int width, int height,
         alignas(16) int32_t va[4], vb[4];
         vst1q_s32(va, a); vst1q_s32(vb, b);
         for (int lane = 0; lane < 4; ++lane)
-            xt[static_cast<size_t>(x + lane)] = static_cast<uint64_t>(static_cast<int64_t>(va[lane]))
+            xt[x + lane] = static_cast<uint64_t>(static_cast<int64_t>(va[lane]))
                 + static_cast<uint64_t>(static_cast<int64_t>(vb[lane]));
     }
-    for (; x < width; ++x) xt[static_cast<size_t>(x)] = xterm(x0 + x);
+    for (; x < width; ++x) xt[x] = xterm(x0 + x);
     for (int z = 0; z < height; ++z) {
         const uint64_t zb = zbase(seed, z0 + z);
         auto *row = out + static_cast<size_t>(z) * static_cast<size_t>(width);
         for (int column = 0; column < width; ++column)
             row[column] = static_cast<uint8_t>(is_slime_from_chunk_seed(
-                static_cast<int64_t>((zb + xt[static_cast<size_t>(column)]) ^ kChunkXor)));
+                static_cast<int64_t>((zb + xt[column]) ^ kChunkXor)));
     }
 }
 

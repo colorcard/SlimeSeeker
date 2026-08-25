@@ -42,13 +42,13 @@ bool cpu_has_neon() {
 }
 
 #if !defined(SS_HAS_AVX2_OBJECT)
-void build_map_avx2(int64_t s, int32_t x, int32_t z, int w, int h, uint8_t *o) {
-    build_map_scalar(s, x, z, w, h, o);
+void build_map_avx2(int64_t s, int32_t x, int32_t z, int w, int h, uint8_t *o, uint64_t *xt) {
+    build_map_scalar(s, x, z, w, h, o, xt);
 }
 #endif
 #if !defined(SS_HAS_NEON_OBJECT)
-void build_map_neon(int64_t s, int32_t x, int32_t z, int w, int h, uint8_t *o) {
-    build_map_scalar(s, x, z, w, h, o);
+void build_map_neon(int64_t s, int32_t x, int32_t z, int w, int h, uint8_t *o, uint64_t *xt) {
+    build_map_scalar(s, x, z, w, h, o, xt);
 }
 #endif
 
@@ -57,19 +57,20 @@ static BuildMapFn calibrated(BuildMapFn candidate) {
     // 用固定输入先对拍，再以中位数过滤冷启动抖动；不足 5% 的收益仍选择标量。
     constexpr int width = 256, height = 128;
     std::vector<uint8_t> baseline(width * height), trial(width * height);
+    std::vector<uint64_t> xterm_scratch(width);
     using clock = std::chrono::steady_clock;
     auto measure = [&](BuildMapFn fn) {
         std::array<int64_t, 7> samples{};
         for (auto &sample : samples) {
             const auto start = clock::now();
-            fn(0, -12345, 6789, width, height, trial.data());
+            fn(0, -12345, 6789, width, height, trial.data(), xterm_scratch.data());
             sample = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count();
         }
         std::sort(samples.begin(), samples.end());
         return samples[samples.size() / 2];
     };
-    build_map_scalar(0, -12345, 6789, width, height, baseline.data());
-    candidate(0, -12345, 6789, width, height, trial.data());
+    build_map_scalar(0, -12345, 6789, width, height, baseline.data(), xterm_scratch.data());
+    candidate(0, -12345, 6789, width, height, trial.data(), xterm_scratch.data());
     if (baseline != trial) return build_map_scalar;
     const auto scalar_ns = measure(build_map_scalar);
     const auto candidate_ns = measure(candidate);

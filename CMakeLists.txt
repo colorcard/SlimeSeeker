@@ -5,6 +5,7 @@ project(SlimeSeeker VERSION 1.0.0 LANGUAGES C CXX)
 option(SLIMESEEKER_BUILD_TESTS "Build tests" ON)
 option(SLIMESEEKER_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(SLIMESEEKER_BUILD_SHARED "Build shared library" OFF)
+option(SLIMESEEKER_ENABLE_IPO "Enable IPO/LTO for optimized configurations" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +15,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(MSVC)
   add_compile_options(/utf-8)
 endif()
+
+# IPO 不是所有编译器/链接器组合都支持；探测失败时保持普通优化构建，而不是阻断配置。
+set(SS_IPO_AVAILABLE OFF)
+if(SLIMESEEKER_ENABLE_IPO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT SS_IPO_AVAILABLE OUTPUT SS_IPO_ERROR LANGUAGES CXX)
+  if(NOT SS_IPO_AVAILABLE)
+    message(WARNING "IPO/LTO is unavailable: ${SS_IPO_ERROR}")
+  endif()
+endif()
+
+function(ss_enable_ipo target_name)
+  if(SS_IPO_AVAILABLE)
+    set_property(TARGET ${target_name} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    set_property(TARGET ${target_name} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+  endif()
+endfunction()
 
 set(SS_LIBRARY_TYPE STATIC)
 if(SLIMESEEKER_BUILD_SHARED)
@@ -27,6 +45,7 @@ add_library(slimeseeker ${SS_LIBRARY_TYPE}
   src/backends/scalar.cpp
   src/backends/dispatch.cpp)
 add_library(SlimeSeeker::slimeseeker ALIAS slimeseeker)
+ss_enable_ipo(slimeseeker)
 target_include_directories(slimeseeker
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>
@@ -59,6 +78,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(slimeseeker PRIVATE Threads::Threads)
 
 add_executable(slimeseeker_cli apps/cli/main.cpp)
+ss_enable_ipo(slimeseeker_cli)
 set_target_properties(slimeseeker_cli PROPERTIES OUTPUT_NAME slimeseeker)
 target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker)
 
@@ -82,11 +102,13 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/SlimeSeekerConfig.cmake
 if(SLIMESEEKER_BUILD_TESTS)
   enable_testing()
   add_executable(slimeseeker_unit_tests tests/unit/tests.cpp)
+  ss_enable_ipo(slimeseeker_unit_tests)
   target_include_directories(slimeseeker_unit_tests PRIVATE src)
   target_link_libraries(slimeseeker_unit_tests PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME unit_tests COMMAND slimeseeker_unit_tests)
   add_test(NAME cli_help COMMAND slimeseeker_cli --help)
   add_executable(slimeseeker_regression tests/regression/golden.cpp)
+  ss_enable_ipo(slimeseeker_regression)
   target_link_libraries(slimeseeker_regression PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME full_golden_regression COMMAND slimeseeker_regression)
   add_executable(slimeseeker_c_api_smoke tests/integration/c_api_smoke.c)
@@ -97,6 +119,7 @@ endif()
 
 if(SLIMESEEKER_BUILD_BENCHMARKS)
   add_executable(slimeseeker_bench benchmarks/benchmark.cpp)
+  ss_enable_ipo(slimeseeker_bench)
   target_include_directories(slimeseeker_bench PRIVATE src)
   target_link_libraries(slimeseeker_bench PRIVATE SlimeSeeker::slimeseeker)
 endif()

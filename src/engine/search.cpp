@@ -51,6 +51,13 @@ struct Shared {
           batch_capacity(capacity) {}
 };
 
+struct WorkerScratch {
+    // 每个 worker 只分配一次最大 tile 缓冲，后续 tile 覆写复用，避免频繁 malloc/free。
+    std::vector<uint8_t> map = std::vector<uint8_t>(static_cast<size_t>(kTileMap) * kTileMap);
+    std::vector<uint16_t> sat = std::vector<uint16_t>(static_cast<size_t>(kTileMap + 1) * (kTileMap + 1));
+    std::vector<uint64_t> xterm = std::vector<uint64_t>(kTileMap);
+};
+
 uint16_t rectangle_sum(const uint16_t *sat, size_t stride,
                        int z0, int x0, int z1, int x1) {
     // SAT 总值可以超过 uint16_t，但查询窗口至多 289 格；四项差分在模 2^16 下仍精确。
@@ -76,7 +83,8 @@ bool submit(Shared &shared, std::vector<ss_result> &batch) {
     return true;
 }
 
-void process_tile(Shared &shared, uint64_t tile_index, std::vector<ss_result> &batch) {
+void process_tile(Shared &shared, WorkerScratch &scratch, uint64_t tile_index,
+                  std::vector<ss_result> &batch) {
     const auto &p = shared.params;
     const uint64_t tile_z = tile_index / shared.tiles_x;
     const uint64_t tile_x = tile_index % shared.tiles_x;
@@ -90,14 +98,16 @@ void process_tile(Shared &shared, uint64_t tile_index, std::vector<ss_result> &b
     const int32_t bz = static_cast<int32_t>(bz64);
 
     // (bx,bz) 是第一个候选中心；位图向左上扩展 8 格，保证边缘中心也有完整窗口。
-    std::vector<uint8_t> map(static_cast<size_t>(mw) * mh);
-    std::vector<uint16_t> sat(static_cast<size_t>(mw + 1) * (mh + 1), 0);
-    shared.build_map(p.world_seed, bx - kRadius, bz - kRadius, mw, mh, map.data());
+    auto *map = scratch.map.data();
+    auto *sat = scratch.sat.data();
+    shared.build_map(p.world_seed, bx - kRadius, bz - kRadius, mw, mh, map, scratch.xterm.data());
 
     const size_t stride = static_cast<size_t>(mw + 1);
+    std::fill_n(sat, stride, uint16_t{0});
     // 融合行前缀与上一行 SAT，避免额外保存中间行前缀数组。
     for (int z = 0; z < mh; ++z) {
         uint16_t row_sum = 0;
+        sat[static_cast<size_t>(z + 1) * stride] = 0;
         for (int x = 0; x < mw; ++x) {
             row_sum = static_cast<uint16_t>(row_sum + map[static_cast<size_t>(z) * mw + x]);
             sat[static_cast<size_t>(z + 1) * stride + x + 1] =
@@ -109,10 +119,10 @@ void process_tile(Shared &shared, uint64_t tile_index, std::vector<ss_result> &b
     for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
         for (int x = 0; x < cx; ++x) {
             // 圆环是 17×17 方框的子集；方框尚未达到阈值时可安全跳过 20 段精确查询。
-            if (rectangle_sum(sat.data(), stride, z, x, z + kWindow, x + kWindow) < p.threshold) continue;
+            if (rectangle_sum(sat, stride, z, x, z + kWindow, x + kWindow) < p.threshold) continue;
             uint16_t count = 0;
             for (const auto &run : runs) {
-                count = static_cast<uint16_t>(count + rectangle_sum(sat.data(), stride,
+                count = static_cast<uint16_t>(count + rectangle_sum(sat, stride,
                     z + run.row, x + run.first, z + run.row + 1, x + run.last + 1));
             }
             if (count >= p.threshold) {
@@ -126,13 +136,14 @@ void process_tile(Shared &shared, uint64_t tile_index, std::vector<ss_result> &b
 
 void worker(Shared &shared) noexcept {
     try {
+        WorkerScratch scratch;
         std::vector<ss_result> batch;
         batch.reserve(shared.batch_capacity);
         while (!shared.stop.load(std::memory_order_relaxed)) {
             // 动态领取 tile，避免边缘 tile 和不同命中密度造成静态分片尾部失衡。
             const uint64_t tile = shared.next_tile.fetch_add(1, std::memory_order_relaxed);
             if (tile >= shared.tile_count) break;
-            process_tile(shared, tile, batch);
+            process_tile(shared, scratch, tile, batch);
         }
         submit(shared, batch);
     } catch (...) {

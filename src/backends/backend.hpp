@@ -11,14 +11,14 @@
 
 namespace ss {
 
-using BuildMapFn = void (*)(int64_t, int32_t, int32_t, int, int, uint8_t *);
+// xterm_scratch 至少包含 width 个元素，由 worker 持有并跨 tile 复用。
+using BuildMapFn = void (*)(int64_t, int32_t, int32_t, int, int, uint8_t *, uint64_t *);
 
-void build_map_scalar(int64_t, int32_t, int32_t, int, int, uint8_t *);
-void build_map_avx2(int64_t, int32_t, int32_t, int, int, uint8_t *);
-void build_map_neon(int64_t, int32_t, int32_t, int, int, uint8_t *);
+void build_map_scalar(int64_t, int32_t, int32_t, int, int, uint8_t *, uint64_t *);
+void build_map_avx2(int64_t, int32_t, int32_t, int, int, uint8_t *, uint64_t *);
+void build_map_neon(int64_t, int32_t, int32_t, int, int, uint8_t *, uint64_t *);
 bool cpu_has_avx2();
 bool cpu_has_neon();
 BuildMapFn select_backend(ss_backend requested, ss_backend &selected);
 
 } // namespace ss
-

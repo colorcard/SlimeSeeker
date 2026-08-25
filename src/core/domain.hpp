@@ -46,7 +46,17 @@ constexpr int64_t chunk_seed(int64_t seed, int32_t x, int32_t z) {
     return static_cast<int64_t>((zbase(seed, z) + xterm(x)) ^ kChunkXor);
 }
 
-bool is_slime_from_chunk_seed(int64_t seed);
+// 该函数位于头文件中，保证每个区块都会调用的 LCG 热路径可被后端直接内联。
+// rejection 尾部概率极低，但必须保留循环以逐位兼容 java.util.Random.nextInt(10)。
+inline bool is_slime_from_chunk_seed(int64_t chunk_seed_value) {
+    uint64_t state = (static_cast<uint64_t>(chunk_seed_value) ^ kLcgMul) & kLcgMask;
+    for (;;) {
+        state = (state * kLcgMul + kLcgAdd) & kLcgMask;
+        const uint32_t bits = static_cast<uint32_t>(state >> 17);
+        const uint32_t value = bits % 10u;
+        if (bits - value + 9u < 0x80000000u) return value == 0;
+    }
+}
 inline bool is_slime(int64_t seed, int32_t x, int32_t z) {
     return is_slime_from_chunk_seed(chunk_seed(seed, x, z));
 }
@@ -54,4 +64,3 @@ const Runs &donut_runs();
 bool in_donut(int dx, int dz);
 
 } // namespace ss
-

@@ -29,10 +29,11 @@ int main(int argc, char **argv) {
         ss_backend selected{};
         auto map_fn = ss::select_backend(backend, selected);
         std::vector<uint8_t> map(512u * 512u);
+        std::vector<uint64_t> xterm_scratch(512u);
         constexpr int map_repeats = 20;
         auto map_start = std::chrono::steady_clock::now();
         for (int repeat = 0; repeat < map_repeats; ++repeat)
-            map_fn(0, -256 + repeat, -256, 512, 512, map.data());
+            map_fn(0, -256 + repeat, -256, 512, 512, map.data(), xterm_scratch.data());
         const double map_elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - map_start).count();
         std::printf("{\"phase\":\"map_build\",\"backend_requested\":\"%s\",\"backend_selected\":\"%s\","

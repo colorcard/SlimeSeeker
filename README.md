@@ -15,7 +15,11 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-默认同时构建 `slimeseeker`、`slimeseeker_tests` 和 `slimeseeker_bench`。可通过 `SLIMESEEKER_BUILD_TESTS`、`SLIMESEEKER_BUILD_BENCHMARKS` 与 `SLIMESEEKER_BUILD_SHARED` 调整。
+默认同时构建 `slimeseeker`、`slimeseeker_unit_tests` 和 `slimeseeker_bench`。可通过
+`SLIMESEEKER_BUILD_TESTS`、`SLIMESEEKER_BUILD_BENCHMARKS` 与
+`SLIMESEEKER_BUILD_SHARED` 调整。
+Release 与 RelWithDebInfo 默认在工具链支持时启用 IPO/LTO；需要生成无 LTO 对照构建时使用
+`-DSLIMESEEKER_ENABLE_IPO=OFF`。
 
 ## 使用
 

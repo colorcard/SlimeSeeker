@@ -7,12 +7,11 @@
 #include "backends/backend.hpp"
 #include "core/domain.hpp"
 #include <immintrin.h>
-#include <vector>
 
 namespace ss {
 
-void build_map_avx2(int64_t seed, int32_t x0, int32_t z0, int width, int height, uint8_t *out) {
-    std::vector<uint64_t> xt(static_cast<size_t>(width));
+void build_map_avx2(int64_t seed, int32_t x0, int32_t z0, int width, int height,
+                    uint8_t *out, uint64_t *xt) {
     int x = 0;
     const __m256i offsets = _mm256_setr_epi32(0,1,2,3,4,5,6,7);
     const __m256i c1 = _mm256_set1_epi32(4987142);
@@ -26,17 +25,17 @@ void build_map_avx2(int64_t seed, int32_t x0, int32_t z0, int width, int height,
         _mm256_store_si256(reinterpret_cast<__m256i *>(terms_a), t1);
         _mm256_store_si256(reinterpret_cast<__m256i *>(terms_b), t2);
         for (int lane = 0; lane < 8; ++lane) {
-            xt[static_cast<size_t>(x + lane)] = static_cast<uint64_t>(static_cast<int64_t>(terms_a[lane]))
+            xt[x + lane] = static_cast<uint64_t>(static_cast<int64_t>(terms_a[lane]))
                 + static_cast<uint64_t>(static_cast<int64_t>(terms_b[lane]));
         }
     }
-    for (; x < width; ++x) xt[static_cast<size_t>(x)] = xterm(x0 + x);
+    for (; x < width; ++x) xt[x] = xterm(x0 + x);
     for (int z = 0; z < height; ++z) {
         const uint64_t zb = zbase(seed, z0 + z);
         auto *row = out + static_cast<size_t>(z) * static_cast<size_t>(width);
         for (int column = 0; column < width; ++column)
             row[column] = static_cast<uint8_t>(is_slime_from_chunk_seed(
-                static_cast<int64_t>((zb + xt[static_cast<size_t>(column)]) ^ kChunkXor)));
+                static_cast<int64_t>((zb + xt[column]) ^ kChunkXor)));
     }
 }
 
