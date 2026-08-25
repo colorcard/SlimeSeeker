@@ -23,7 +23,11 @@ int count_results(void *opaque, const ss_result *, size_t count) {
 int main(int argc, char **argv) {
     int range = argc > 1 ? std::atoi(argv[1]) : 5000;
     unsigned threads = argc > 2 ? static_cast<unsigned>(std::atoi(argv[2])) : 0;
-    if (range <= 0) { std::fprintf(stderr, "usage: slimeseeker_bench [range] [threads]\n"); return 1; }
+    int threshold = argc > 3 ? std::atoi(argv[3]) : 45;
+    if (range <= 0 || threshold < 0 || threshold > SS_DONUT_CELLS) {
+        std::fprintf(stderr, "usage: slimeseeker_bench [range] [threads] [threshold]\n");
+        return 1;
+    }
     for (ss_backend backend : {SS_BACKEND_SCALAR, SS_BACKEND_AUTO, SS_BACKEND_AVX2, SS_BACKEND_NEON}) {
         if (!ss_backend_available(backend)) continue;
         ss_backend selected{};
@@ -41,7 +45,8 @@ int main(int argc, char **argv) {
             ss_backend_name(backend), ss_backend_name(selected), 512u * 512u, map_repeats, map_elapsed,
             static_cast<double>(512u * 512u) * map_repeats / map_elapsed);
         Stats stats;
-        ss_search_params_v1 params{sizeof(params), 0, -range, range, -range, range, 45, 0};
+        ss_search_params_v1 params{sizeof(params), 0, -range, range, -range, range,
+                                   static_cast<uint16_t>(threshold), 0};
         ss_search_options_v1 options{sizeof(options), threads, backend, 4096};
         ss_callbacks_v1 callbacks{sizeof(callbacks), &stats, count_results, nullptr, nullptr};
         const auto start = std::chrono::steady_clock::now();
@@ -49,9 +54,10 @@ int main(int argc, char **argv) {
         const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         const uint64_t side = static_cast<uint64_t>(range) * 2;
         const uint64_t candidates = side * side;
-        std::printf("{\"phase\":\"end_to_end\",\"backend_requested\":\"%s\",\"backend_selected\":\"%s\",\"range\":%d,\"threads\":%u,\"candidates\":%llu,"
+        std::printf("{\"phase\":\"end_to_end\",\"backend_requested\":\"%s\",\"backend_selected\":\"%s\",\"range\":%d,\"threads\":%u,\"threshold\":%d,\"candidates\":%llu,"
                     "\"hits\":%llu,\"elapsed_s\":%.6f,\"candidates_per_s\":%.3f,\"status\":\"%s\"}\n",
-            ss_backend_name(backend), ss_backend_name(selected), range, threads, static_cast<unsigned long long>(candidates),
+            ss_backend_name(backend), ss_backend_name(selected), range, threads, threshold,
+            static_cast<unsigned long long>(candidates),
             static_cast<unsigned long long>(stats.hits), elapsed, static_cast<double>(candidates) / elapsed,
             ss_status_string(status));
         if (status != SS_OK) return status;
