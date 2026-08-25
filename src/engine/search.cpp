@@ -55,12 +55,14 @@ struct WorkerScratch {
     // 每个 worker 只分配一次最大 tile 缓冲，后续 tile 覆写复用，避免频繁 malloc/free。
     std::vector<uint8_t> map = std::vector<uint8_t>(static_cast<size_t>(kTileMap) * kTileMap);
     std::vector<uint16_t> sat = std::vector<uint16_t>(static_cast<size_t>(kTileMap + 1) * (kTileMap + 1));
+    std::vector<uint16_t> column_sums = std::vector<uint16_t>(kTileMap);
     std::vector<uint64_t> xterm = std::vector<uint64_t>(kTileMap);
 };
 
 // 低阈值下外接方框几乎无法过滤候选；直接滑动圆环可省去整张 SAT 的构建和查询。
 // 该边界只影响策略选择，不影响结果，需由同机高低阈值基准共同校准。
 constexpr uint16_t kSlidingThresholdMax = 30;
+constexpr uint16_t kBoxSlidingThresholdMin = 41;
 
 uint16_t rectangle_sum(const uint16_t *sat, size_t stride,
                        int z0, int x0, int z1, int x1) {
@@ -111,6 +113,44 @@ void scan_tile_sliding(Shared &shared, const uint8_t *map, int mw, int cx, int c
                 const auto *row = map + static_cast<size_t>(z + run.row) * mw;
                 count = static_cast<uint16_t>(count - row[x + run.first] + row[x + run.last + 1]);
             }
+        }
+    }
+}
+
+void scan_tile_box_sliding(Shared &shared, const uint8_t *map, uint16_t *column_sums,
+                           int mw, int cx, int cz, int32_t bx, int32_t bz,
+                           std::vector<ss_result> &batch) {
+    // 先沿 z 聚合17行，再沿 x 滑动17列；每个候选的方框预筛只需两次数组读取。
+    std::fill_n(column_sums, mw, uint16_t{0});
+    for (int row = 0; row < kWindow; ++row) {
+        const auto *source = map + static_cast<size_t>(row) * mw;
+        for (int x = 0; x < mw; ++x) column_sums[x] += source[x];
+    }
+
+    const auto &runs = donut_runs();
+    for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
+        uint16_t box_count = 0;
+        for (int column = 0; column < kWindow; ++column) box_count += column_sums[column];
+        for (int x = 0; x < cx; ++x) {
+            if (box_count >= shared.params.threshold) {
+                uint16_t count = 0;
+                // 高阈值下通过方框预筛的候选极少，直接读取192格比为所有候选构建 SAT 更省。
+                for (const auto &run : runs) {
+                    const auto *row = map + static_cast<size_t>(z + run.row) * mw;
+                    for (int column = x + run.first; column <= x + run.last; ++column)
+                        count += row[column];
+                }
+                if (count >= shared.params.threshold &&
+                    !append_result(shared, batch, bx + x, bz + z, count)) return;
+            }
+            if (x + 1 < cx)
+                box_count = static_cast<uint16_t>(box_count - column_sums[x] + column_sums[x + kWindow]);
+        }
+        if (z + 1 < cz) {
+            const auto *leaving = map + static_cast<size_t>(z) * mw;
+            const auto *entering = map + static_cast<size_t>(z + kWindow) * mw;
+            for (int x = 0; x < mw; ++x)
+                column_sums[x] = static_cast<uint16_t>(column_sums[x] - leaving[x] + entering[x]);
         }
     }
 }
@@ -167,6 +207,8 @@ void process_tile(Shared &shared, WorkerScratch &scratch, uint64_t tile_index,
     shared.build_map(p.world_seed, bx - kRadius, bz - kRadius, mw, mh, map, scratch.xterm.data());
     if (p.threshold <= kSlidingThresholdMax)
         scan_tile_sliding(shared, map, mw, cx, cz, bx, bz, batch);
+    else if (p.threshold >= kBoxSlidingThresholdMin)
+        scan_tile_box_sliding(shared, map, scratch.column_sums.data(), mw, cx, cz, bx, bz, batch);
     else
         scan_tile_sat(shared, map, sat, mw, mh, cx, cz, bx, bz, batch);
     shared.completed.fetch_add(static_cast<uint64_t>(cx) * static_cast<uint64_t>(cz), std::memory_order_relaxed);

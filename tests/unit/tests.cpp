@@ -106,7 +106,7 @@ void test_next_int10_rejection_path() {
 
 void test_differential_search() {
     constexpr int64_t seed = -184718958561915LL;
-    for (uint16_t threshold : {uint16_t{20}, uint16_t{30}, uint16_t{31}}) {
+    for (uint16_t threshold : {uint16_t{20}, uint16_t{30}, uint16_t{31}, uint16_t{40}, uint16_t{41}}) {
         auto actual = run(seed, -19, 23, -17, 21, threshold, 3, SS_BACKEND_SCALAR);
         std::vector<ss_result> expected;
         for (int32_t z = -17; z < 21; ++z) for (int32_t x = -19; x < 23; ++x) {
