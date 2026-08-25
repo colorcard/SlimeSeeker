@@ -64,6 +64,31 @@ struct WorkerScratch {
 constexpr uint16_t kSlidingThresholdMax = 30;
 constexpr uint16_t kBoxSlidingThresholdMin = 41;
 
+struct OrderedRun {
+    Run run;
+    uint16_t remaining;
+};
+
+const std::array<OrderedRun, 20> &ordered_donut_runs() {
+    static const std::array<OrderedRun, 20> ordered = [] {
+        std::array<Run, 20> runs = donut_runs();
+        std::sort(runs.begin(), runs.end(), [](const Run &a, const Run &b) {
+            const int a_length = static_cast<int>(a.last) - a.first + 1;
+            const int b_length = static_cast<int>(b.last) - b.first + 1;
+            return a_length > b_length;
+        });
+        std::array<OrderedRun, 20> result{};
+        uint16_t remaining = SS_DONUT_CELLS;
+        for (size_t i = 0; i < runs.size(); ++i) {
+            const uint16_t length = static_cast<uint16_t>(runs[i].last - runs[i].first + 1);
+            remaining = static_cast<uint16_t>(remaining - length);
+            result[i] = OrderedRun{runs[i], remaining};
+        }
+        return result;
+    }();
+    return ordered;
+}
+
 uint16_t rectangle_sum(const uint16_t *sat, size_t stride,
                        int z0, int x0, int z1, int x1) {
     // SAT 总值可以超过 uint16_t，但查询窗口至多 289 格；四项差分在模 2^16 下仍精确。
@@ -127,7 +152,7 @@ void scan_tile_box_sliding(Shared &shared, const uint8_t *map, uint16_t *column_
         for (int x = 0; x < mw; ++x) column_sums[x] += source[x];
     }
 
-    const auto &runs = donut_runs();
+    const auto &runs = ordered_donut_runs();
     for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
         uint16_t box_count = 0;
         for (int column = 0; column < kWindow; ++column) box_count += column_sums[column];
@@ -135,10 +160,12 @@ void scan_tile_box_sliding(Shared &shared, const uint8_t *map, uint16_t *column_
             if (box_count >= shared.params.threshold) {
                 uint16_t count = 0;
                 // 高阈值下通过方框预筛的候选极少，直接读取192格比为所有候选构建 SAT 更省。
-                for (const auto &run : runs) {
+                for (const auto &ordered : runs) {
+                    const auto &run = ordered.run;
                     const auto *row = map + static_cast<size_t>(z + run.row) * mw;
                     for (int column = x + run.first; column <= x + run.last; ++column)
                         count += row[column];
+                    if (static_cast<uint16_t>(count + ordered.remaining) < shared.params.threshold) break;
                 }
                 if (count >= shared.params.threshold &&
                     !append_result(shared, batch, bx + x, bz + z, count)) return;
@@ -170,16 +197,18 @@ void scan_tile_sat(Shared &shared, const uint8_t *map, uint16_t *sat, int mw, in
         }
     }
 
-    const auto &runs = donut_runs();
+    const auto &runs = ordered_donut_runs();
     for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
         for (int x = 0; x < cx; ++x) {
             // 圆环是 17×17 方框的子集；方框尚未达到阈值时可安全跳过 20 段精确查询。
             if (rectangle_sum(sat, stride, z, x, z + kWindow, x + kWindow) < shared.params.threshold)
                 continue;
             uint16_t count = 0;
-            for (const auto &run : runs) {
+            for (const auto &ordered : runs) {
+                const auto &run = ordered.run;
                 count = static_cast<uint16_t>(count + rectangle_sum(sat, stride,
                     z + run.row, x + run.first, z + run.row + 1, x + run.last + 1));
+                if (static_cast<uint16_t>(count + ordered.remaining) < shared.params.threshold) break;
             }
             if (count >= shared.params.threshold &&
                 !append_result(shared, batch, bx + x, bz + z, count)) return;
