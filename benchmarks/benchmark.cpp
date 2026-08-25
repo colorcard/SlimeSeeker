@@ -62,5 +62,22 @@ int main(int argc, char **argv) {
             ss_status_string(status));
         if (status != SS_OK) return status;
     }
+    if (ss_backend_available(SS_BACKEND_CUDA)) {
+        Stats stats;
+        ss_search_params_v1 params{sizeof(params), 0, -range, range, -range, range,
+                                   static_cast<uint16_t>(threshold), 0};
+        ss_search_options_v1 options{sizeof(options), threads, SS_BACKEND_CUDA, 4096};
+        ss_callbacks_v1 callbacks{sizeof(callbacks), &stats, count_results, nullptr, nullptr};
+        const auto start = std::chrono::steady_clock::now();
+        const auto status = ss_search(&params, &options, &callbacks);
+        const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        const uint64_t side = static_cast<uint64_t>(range) * 2;
+        const uint64_t candidates = side * side;
+        std::printf("{\"phase\":\"end_to_end\",\"backend_requested\":\"cuda\",\"backend_selected\":\"cuda\",\"range\":%d,\"threads\":%u,\"threshold\":%d,\"candidates\":%llu,\"hits\":%llu,\"elapsed_s\":%.6f,\"candidates_per_s\":%.3f,\"status\":\"%s\"}\n",
+                    range, threads, threshold, static_cast<unsigned long long>(candidates),
+                    static_cast<unsigned long long>(stats.hits), elapsed,
+                    static_cast<double>(candidates) / elapsed, ss_status_string(status));
+        if (status != SS_OK) return status;
+    }
     return 0;
 }

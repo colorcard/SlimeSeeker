@@ -89,7 +89,7 @@ void usage(const char *program) {
     std::fprintf(stderr,
         "usage: %s [OPTIONS] SEED RANGE [THRESHOLD]\n"
         "  -j, --threads N             worker threads (0=auto)\n"
-        "  -m, --backend auto|scalar|avx2|neon\n"
+        "  -m, --backend auto|scalar|avx2|neon|cuda\n"
         "  -f, --format human|csv      output format\n"
         "  -u, --unordered             stream without sorting\n"
         "      --top K                 retain only the best K results\n"
@@ -104,6 +104,7 @@ bool parse_backend(const char *value, ss_backend &backend) {
     else if (std::strcmp(value, "scalar") == 0) backend = SS_BACKEND_SCALAR;
     else if (std::strcmp(value, "avx2") == 0) backend = SS_BACKEND_AVX2;
     else if (std::strcmp(value, "neon") == 0) backend = SS_BACKEND_NEON;
+    else if (std::strcmp(value, "cuda") == 0) backend = SS_BACKEND_CUDA;
     else return false;
     return true;
 }

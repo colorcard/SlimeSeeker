@@ -33,6 +33,7 @@ const char *ss_backend_name(ss_backend backend) {
         case SS_BACKEND_SCALAR: return "scalar";
         case SS_BACKEND_AVX2: return "avx2";
         case SS_BACKEND_NEON: return "neon";
+        case SS_BACKEND_CUDA: return "cuda";
     }
     return "unknown";
 }
@@ -43,6 +44,7 @@ int ss_backend_available(ss_backend backend) {
         case SS_BACKEND_SCALAR: return 1;
         case SS_BACKEND_AVX2: return ss::cpu_has_avx2() ? 1 : 0;
         case SS_BACKEND_NEON: return ss::cpu_has_neon() ? 1 : 0;
+        case SS_BACKEND_CUDA: return ss::cuda_available() ? 1 : 0;
     }
     return 0;
 }

@@ -16,6 +16,13 @@
 
 namespace ss {
 
+#if !defined(SS_HAS_CUDA)
+bool cuda_available() { return false; }
+ss_status search_cuda(const ss_search_params_v1 &, const ss_search_options_v1 &, const ss_callbacks_v1 &) {
+    return SS_BACKEND_UNAVAILABLE;
+}
+#endif
+
 bool cpu_has_avx2() {
 #if defined(SS_HAS_AVX2_OBJECT) && (defined(__GNUC__) || defined(__clang__))
     __builtin_cpu_init();

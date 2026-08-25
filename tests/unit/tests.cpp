@@ -138,6 +138,22 @@ void test_threads_and_backends() {
     }
 }
 
+void test_cuda_backend_when_available() {
+    if (!ss_backend_available(SS_BACKEND_CUDA)) return;
+    const auto scalar = run(-184718958561915LL, -37, 521, -29, 509, 0, 1, SS_BACKEND_SCALAR);
+    const auto cuda = run(-184718958561915LL, -37, 521, -29, 509, 0, 1, SS_BACKEND_CUDA);
+    auto normalize = [](auto values) {
+        std::sort(values.begin(), values.end(), result_less);
+        return values;
+    };
+    const auto a = normalize(scalar);
+    const auto b = normalize(cuda);
+    CHECK(a.size() == b.size());
+    CHECK(std::equal(a.begin(), a.end(), b.begin(), b.end(), [](auto x, auto y) {
+        return x.x == y.x && x.z == y.z && x.count == y.count;
+    }));
+}
+
 void test_api_validation() {
     ss_search_params_v1 params{sizeof(params), 0, -1, 1, -1, 1, 193, 0};
     CHECK(ss_search(&params, nullptr, nullptr) == SS_INVALID_ARGUMENT);
@@ -183,6 +199,7 @@ int main() {
     test_next_int10_rejection_path();
     test_differential_search();
     test_threads_and_backends();
+    test_cuda_backend_when_available();
     test_api_validation();
     test_control_contracts();
     if (failures) std::fprintf(stderr, "%d test checks failed\n", failures);

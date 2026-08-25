@@ -9,7 +9,7 @@ SlimeSeeker 是一个跨平台的 Minecraft Java Edition 史莱姆区块密度�
 - 精确复刻 Minecraft Java Edition 的区块种子运算、48 位 Java LCG 与 `Random.nextInt(10)` rejection sampling；
 - 搜索固定几何 `1 < dx² + dz² <= 64`，17×17 窗口内共包含 192 个区块；
 - 使用 tile 动态调度和 worker 独占 scratch，支持单线程与多线程运行；
-- 提供可移植 scalar 后端，以及独立编译、运行时检测的 AVX2 和 NEON 后端；
+- 提供可移植 scalar 后端，以及独立编译、运行时检测的 AVX2、NEON 和可选 CUDA 后端；
 - 按阈值选择滑动圆环、二维 SAT 或滑动方框搜索管线；
 - 提供稳定的版本化 C ABI，回调支持批量结果、进度、取消和主动终止；
 - CLI 支持确定性全量排序、无序流式输出、Top-K 保留、CSV 和基准模式；
@@ -81,7 +81,7 @@ slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
 | 选项 | 说明 |
 |---|---|
 | `-j, --threads N` | worker 数量，`0` 表示自动使用硬件并发数 |
-| `-m, --backend auto\|scalar\|avx2\|neon` | 选择 CPU 后端，默认 `auto` |
+| `-m, --backend auto\|scalar\|avx2\|neon\|cuda` | 选择 CPU/CUDA 后端，默认 `auto` |
 | `-f, --format human\|csv` | 选择人类可读格式或 CSV，默认 `human` |
 | `-u, --unordered` | 搜索时直接流式输出，不做最终排序 |
 | `--top K` | 只保留全局排序最优的 K 条结果 |
@@ -115,6 +115,8 @@ slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
 ```
 
 `auto` 会检测当前 CPU 能力，并用短时对拍和中位数校准专用后端。只有 AVX2/NEON 算子结果与 scalar 完全一致且至少快 5% 时才会自动采用；显式请求硬件不支持的后端会返回 `SS_BACKEND_UNAVAILABLE`。
+
+CUDA 需要使用 `-DSLIMESEEKER_ENABLE_CUDA=ON`（默认会在检测到 CUDA toolkit 时启用）。`auto` 保守地不会自动初始化 GPU；显式使用 `--backend cuda` 时，CUDA 后端在 GPU 上生成 tile 位图并执行 17×17 圆环计数。没有可用 CUDA 设备时返回 `SS_BACKEND_UNAVAILABLE`。
 
 ## C ABI 集成
 

@@ -20,5 +20,7 @@ void build_map_neon(int64_t, int32_t, int32_t, int, int, uint8_t *, uint64_t *);
 bool cpu_has_avx2();
 bool cpu_has_neon();
 BuildMapFn select_backend(ss_backend requested, ss_backend &selected);
+bool cuda_available();
+ss_status search_cuda(const ss_search_params_v1 &, const ss_search_options_v1 &, const ss_callbacks_v1 &);
 
 } // namespace ss

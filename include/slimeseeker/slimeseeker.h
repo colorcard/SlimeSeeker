@@ -41,7 +41,8 @@ typedef enum ss_backend {
     SS_BACKEND_AUTO = 0,
     SS_BACKEND_SCALAR = 1,
     SS_BACKEND_AVX2 = 2,
-    SS_BACKEND_NEON = 3
+    SS_BACKEND_NEON = 3,
+    SS_BACKEND_CUDA = 4
 } ss_backend;
 
 /* 搜索中心采用半开区间 [begin,end)；实现会在四周额外读取 8 个区块。 */

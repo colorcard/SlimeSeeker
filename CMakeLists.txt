@@ -6,6 +6,19 @@ option(SLIMESEEKER_BUILD_TESTS "Build tests" ON)
 option(SLIMESEEKER_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(SLIMESEEKER_BUILD_SHARED "Build shared library" OFF)
 option(SLIMESEEKER_ENABLE_IPO "Enable IPO/LTO for optimized configurations" ON)
+option(SLIMESEEKER_ENABLE_CUDA "Build CUDA backend when a CUDA toolkit is available" ON)
+
+include(CheckLanguage)
+set(SS_CUDA_ENABLED OFF)
+if(SLIMESEEKER_ENABLE_CUDA)
+  check_language(CUDA)
+  if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(SS_CUDA_ENABLED ON)
+  else()
+    message(STATUS "CUDA compiler not found; CUDA backend disabled")
+  endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,6 +57,12 @@ add_library(slimeseeker ${SS_LIBRARY_TYPE}
   src/api/c_api.cpp
   src/backends/scalar.cpp
   src/backends/dispatch.cpp)
+if(SS_CUDA_ENABLED)
+  target_sources(slimeseeker PRIVATE src/backends/cuda.cu)
+  target_compile_definitions(slimeseeker PRIVATE SS_HAS_CUDA=1)
+  target_compile_features(slimeseeker PRIVATE cuda_std_17)
+  set_target_properties(slimeseeker PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+endif()
 add_library(SlimeSeeker::slimeseeker ALIAS slimeseeker)
 ss_enable_ipo(slimeseeker)
 target_include_directories(slimeseeker
