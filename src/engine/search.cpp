@@ -58,6 +58,10 @@ struct WorkerScratch {
     std::vector<uint64_t> xterm = std::vector<uint64_t>(kTileMap);
 };
 
+// 低阈值下外接方框几乎无法过滤候选；直接滑动圆环可省去整张 SAT 的构建和查询。
+// 该边界只影响策略选择，不影响结果，需由同机高低阈值基准共同校准。
+constexpr uint16_t kSlidingThresholdMax = 30;
+
 uint16_t rectangle_sum(const uint16_t *sat, size_t stride,
                        int z0, int x0, int z1, int x1) {
     // SAT 总值可以超过 uint16_t，但查询窗口至多 289 格；四项差分在模 2^16 下仍精确。
@@ -83,6 +87,66 @@ bool submit(Shared &shared, std::vector<ss_result> &batch) {
     return true;
 }
 
+bool append_result(Shared &shared, std::vector<ss_result> &batch,
+                   int32_t x, int32_t z, uint16_t count) {
+    batch.push_back(ss_result{x, z, count, 0});
+    return batch.size() < shared.batch_capacity || submit(shared, batch);
+}
+
+void scan_tile_sliding(Shared &shared, const uint8_t *map, int mw, int cx, int cz,
+                       int32_t bx, int32_t bz, std::vector<ss_result> &batch) {
+    const auto &runs = donut_runs();
+    for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
+        uint16_t count = 0;
+        // 每个候选行只完整计算首个圆环；后续中心右移时，每段各减左端、加新右端。
+        for (const auto &run : runs) {
+            const auto *row = map + static_cast<size_t>(z + run.row) * mw;
+            for (int column = run.first; column <= run.last; ++column) count += row[column];
+        }
+        for (int x = 0; x < cx; ++x) {
+            if (count >= shared.params.threshold &&
+                !append_result(shared, batch, bx + x, bz + z, count)) return;
+            if (x + 1 == cx) continue;
+            for (const auto &run : runs) {
+                const auto *row = map + static_cast<size_t>(z + run.row) * mw;
+                count = static_cast<uint16_t>(count - row[x + run.first] + row[x + run.last + 1]);
+            }
+        }
+    }
+}
+
+void scan_tile_sat(Shared &shared, const uint8_t *map, uint16_t *sat, int mw, int mh,
+                   int cx, int cz, int32_t bx, int32_t bz, std::vector<ss_result> &batch) {
+    const size_t stride = static_cast<size_t>(mw + 1);
+    std::fill_n(sat, stride, uint16_t{0});
+    // 融合行前缀与上一行 SAT，避免额外保存中间行前缀数组。
+    for (int z = 0; z < mh; ++z) {
+        uint16_t row_sum = 0;
+        sat[static_cast<size_t>(z + 1) * stride] = 0;
+        for (int x = 0; x < mw; ++x) {
+            row_sum = static_cast<uint16_t>(row_sum + map[static_cast<size_t>(z) * mw + x]);
+            sat[static_cast<size_t>(z + 1) * stride + x + 1] =
+                static_cast<uint16_t>(sat[static_cast<size_t>(z) * stride + x + 1] + row_sum);
+        }
+    }
+
+    const auto &runs = donut_runs();
+    for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
+        for (int x = 0; x < cx; ++x) {
+            // 圆环是 17×17 方框的子集；方框尚未达到阈值时可安全跳过 20 段精确查询。
+            if (rectangle_sum(sat, stride, z, x, z + kWindow, x + kWindow) < shared.params.threshold)
+                continue;
+            uint16_t count = 0;
+            for (const auto &run : runs) {
+                count = static_cast<uint16_t>(count + rectangle_sum(sat, stride,
+                    z + run.row, x + run.first, z + run.row + 1, x + run.last + 1));
+            }
+            if (count >= shared.params.threshold &&
+                !append_result(shared, batch, bx + x, bz + z, count)) return;
+        }
+    }
+}
+
 void process_tile(Shared &shared, WorkerScratch &scratch, uint64_t tile_index,
                   std::vector<ss_result> &batch) {
     const auto &p = shared.params;
@@ -101,36 +165,10 @@ void process_tile(Shared &shared, WorkerScratch &scratch, uint64_t tile_index,
     auto *map = scratch.map.data();
     auto *sat = scratch.sat.data();
     shared.build_map(p.world_seed, bx - kRadius, bz - kRadius, mw, mh, map, scratch.xterm.data());
-
-    const size_t stride = static_cast<size_t>(mw + 1);
-    std::fill_n(sat, stride, uint16_t{0});
-    // 融合行前缀与上一行 SAT，避免额外保存中间行前缀数组。
-    for (int z = 0; z < mh; ++z) {
-        uint16_t row_sum = 0;
-        sat[static_cast<size_t>(z + 1) * stride] = 0;
-        for (int x = 0; x < mw; ++x) {
-            row_sum = static_cast<uint16_t>(row_sum + map[static_cast<size_t>(z) * mw + x]);
-            sat[static_cast<size_t>(z + 1) * stride + x + 1] =
-                static_cast<uint16_t>(sat[static_cast<size_t>(z) * stride + x + 1] + row_sum);
-        }
-    }
-
-    const auto &runs = donut_runs();
-    for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
-        for (int x = 0; x < cx; ++x) {
-            // 圆环是 17×17 方框的子集；方框尚未达到阈值时可安全跳过 20 段精确查询。
-            if (rectangle_sum(sat, stride, z, x, z + kWindow, x + kWindow) < p.threshold) continue;
-            uint16_t count = 0;
-            for (const auto &run : runs) {
-                count = static_cast<uint16_t>(count + rectangle_sum(sat, stride,
-                    z + run.row, x + run.first, z + run.row + 1, x + run.last + 1));
-            }
-            if (count >= p.threshold) {
-                batch.push_back(ss_result{bx + x, bz + z, count, 0});
-                if (batch.size() >= shared.batch_capacity && !submit(shared, batch)) return;
-            }
-        }
-    }
+    if (p.threshold <= kSlidingThresholdMax)
+        scan_tile_sliding(shared, map, mw, cx, cz, bx, bz, batch);
+    else
+        scan_tile_sat(shared, map, sat, mw, mh, cx, cz, bx, bz, batch);
     shared.completed.fetch_add(static_cast<uint64_t>(cx) * static_cast<uint64_t>(cz), std::memory_order_relaxed);
 }
 

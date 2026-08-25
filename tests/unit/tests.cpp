@@ -106,17 +106,19 @@ void test_next_int10_rejection_path() {
 
 void test_differential_search() {
     constexpr int64_t seed = -184718958561915LL;
-    auto actual = run(seed, -19, 23, -17, 21, 20, 3, SS_BACKEND_SCALAR);
-    std::vector<ss_result> expected;
-    for (int32_t z = -17; z < 21; ++z) for (int32_t x = -19; x < 23; ++x) {
-        const auto count = naive_count(seed, x, z);
-        if (count >= 20) expected.push_back({x, z, static_cast<uint16_t>(count), 0});
+    for (uint16_t threshold : {uint16_t{20}, uint16_t{30}, uint16_t{31}}) {
+        auto actual = run(seed, -19, 23, -17, 21, threshold, 3, SS_BACKEND_SCALAR);
+        std::vector<ss_result> expected;
+        for (int32_t z = -17; z < 21; ++z) for (int32_t x = -19; x < 23; ++x) {
+            const auto count = naive_count(seed, x, z);
+            if (count >= threshold) expected.push_back({x, z, static_cast<uint16_t>(count), 0});
+        }
+        std::sort(expected.begin(), expected.end(), result_less);
+        CHECK(actual.size() == expected.size());
+        CHECK(std::equal(actual.begin(), actual.end(), expected.begin(), expected.end(), [](auto a, auto b) {
+            return a.x == b.x && a.z == b.z && a.count == b.count;
+        }));
     }
-    std::sort(expected.begin(), expected.end(), result_less);
-    CHECK(actual.size() == expected.size());
-    CHECK(std::equal(actual.begin(), actual.end(), expected.begin(), expected.end(), [](auto a, auto b) {
-        return a.x == b.x && a.z == b.z && a.count == b.count;
-    }));
 }
 
 void test_threads_and_backends() {
