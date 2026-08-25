@@ -56,6 +56,16 @@ cmake --install build --prefix ./dist
 
 需要和普通 Release 做无 LTO 对照时，可配置 `-DSLIMESEEKER_ENABLE_IPO=OFF`。项目不会全局使用 `-march=native`，平台专用指令只存在于对应的独立编译单元中。
 
+### macOS 首次运行提示
+
+当前 GitHub Release 中的 macOS 二进制尚未经过 Apple Developer ID 签名与 notarization。通过浏览器下载后，macOS Gatekeeper 可能提示 Apple 无法验证 `slimeseeker` 是否包含恶意软件。如果文件确实来自本项目的[官方 Release](https://github.com/colorcard/SlimeSeeker/releases)，可以只对解压后的可执行文件移除 quarantine 属性：
+
+```sh
+xattr -d com.apple.quarantine /path/to/slimeseeker
+```
+
+请把 `/path/to/slimeseeker` 替换为实际可执行文件路径，然后重新运行。不要对来源不明的文件执行此命令，也不建议对整个下载目录递归移除 quarantine；后续版本计划接入 Developer ID 签名与 Apple notarization，从发布流程上消除该提示。
+
 ## 命令行用法
 
 ```text
