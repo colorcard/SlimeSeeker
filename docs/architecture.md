@@ -1,5 +1,8 @@
 # SlimeSeeker 架构
 
+> 当前 CPU 热点、线程扩展和优化优先级记录在
+> [性能热点分析基线](performance-hotspots.md) 中。
+
 ## 目录职责
 
 ```text

@@ -2,7 +2,8 @@
 
 SlimeSeeker 是一个跨平台的 Minecraft Java Edition 史莱姆区块密度搜索库与命令行程序。给定世界种子，它会在指定区块坐标范围内搜索 17×17 环形窗口中史莱姆区块数量达到阈值的中心点。
 
-设计分层、数据流和后端分派约束见 [架构文档](docs/architecture.md)。
+设计分层、数据流和后端分派约束见 [架构文档](docs/architecture.md)，当前性能瓶颈与后续
+优化顺序见 [热点分析基线](docs/performance-hotspots.md)。
 
 ## 构建
 
