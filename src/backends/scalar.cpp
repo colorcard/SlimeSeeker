@@ -1,4 +1,11 @@
-#include "internal.hpp"
+/*
+ * 可移植标量位图算子。
+ *
+ * 这是所有平台必备的正确性基线，并通过 xterm/zbase 预计算消除热循环中的重复乘法。
+ */
+#include "backends/backend.hpp"
+#include "core/domain.hpp"
+#include <vector>
 
 namespace ss {
 

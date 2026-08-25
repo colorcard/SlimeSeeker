@@ -1,5 +1,13 @@
-#include "internal.hpp"
+/*
+ * x86-64 AVX2 位图算子。
+ *
+ * 本文件作为独立编译单元启用 AVX2，只向量化可获益且有原生支持的 32 位回绕运算；
+ * 精确 LCG 判定继续复用领域核心，保证冷门 rejection 分支不产生语义偏差。
+ */
+#include "backends/backend.hpp"
+#include "core/domain.hpp"
 #include <immintrin.h>
+#include <vector>
 
 namespace ss {
 

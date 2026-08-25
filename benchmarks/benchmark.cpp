@@ -1,5 +1,11 @@
+/*
+ * SlimeSeeker 性能基准入口。
+ *
+ * 分别测量位图算子与端到端搜索吞吐，并以逐行 JSON 输出可复现的输入和后端信息；
+ * 本程序不是正确性测试，不设置跨机器的绝对性能阈值。
+ */
 #include "slimeseeker/slimeseeker.h"
-#include "internal.hpp"
+#include "backends/backend.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>

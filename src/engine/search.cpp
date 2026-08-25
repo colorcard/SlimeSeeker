@@ -1,11 +1,22 @@
-#include "internal.hpp"
+/*
+ * CPU 搜索引擎实现。
+ *
+ * 负责 tile 划分、SAT 构建、动态多线程调度、有界结果队列、进度和取消；领域数学
+ * 由 core 提供，区块位图生成由 backends 提供，本层不暴露平台相关指令细节。
+ */
+#include "engine/search.hpp"
+#include "core/domain.hpp"
+#include "backends/backend.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
+#include <functional>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace ss {
 namespace {

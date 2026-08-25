@@ -1,3 +1,4 @@
+# 跨平台持续集成入口：原生测试、arm64 交叉编译和 Sanitizer 验证。
 name: ci
 
 on:

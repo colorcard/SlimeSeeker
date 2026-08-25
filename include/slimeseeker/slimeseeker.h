@@ -1,3 +1,9 @@
+/*
+ * SlimeSeeker 唯一公共 C ABI 头文件。
+ *
+ * API 同时兼容 C 与 C++；所有结构通过 struct_size 支持版本演进，调用方不得依赖
+ * 内部 C++ 类型、线程实现或后端布局。
+ */
 #ifndef SLIMESEEKER_SLIMESEEKER_H
 #define SLIMESEEKER_SLIMESEEKER_H
 

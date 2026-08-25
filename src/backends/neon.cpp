@@ -1,5 +1,13 @@
-#include "internal.hpp"
+/*
+ * arm64 NEON 位图算子。
+ *
+ * 批量生成 x 方向代数项，其余精确随机数逻辑复用领域核心；arm64 平台无需全局修改
+ * 编译选项，因此不会影响标量基线的可移植性。
+ */
+#include "backends/backend.hpp"
+#include "core/domain.hpp"
 #include <arm_neon.h>
+#include <vector>
 
 namespace ss {
 

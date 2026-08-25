@@ -1,3 +1,9 @@
+/*
+ * SlimeSeeker CLI 入口。
+ *
+ * 只负责参数解析、信号处理、结果保留策略与终端输出；搜索算法和并发逻辑全部通过
+ * 公共 C ABI 调用，确保 CLI 自身也是核心库的普通消费者。
+ */
 #include "slimeseeker/slimeseeker.h"
 #include <algorithm>
 #include <atomic>

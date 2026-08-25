@@ -1,3 +1,8 @@
+/*
+ * 完整黄金回归测试入口。
+ *
+ * 对三个固定世界种子扫描 ±10000 区块，并将规范排序后的结果与参考实现逐行比较。
+ */
 #include "slimeseeker/slimeseeker.h"
 #include <algorithm>
 #include <array>

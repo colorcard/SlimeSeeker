@@ -1,9 +1,15 @@
-#include "internal.hpp"
+/*
+ * 核心单元与差分测试入口。
+ *
+ * 使用独立朴素计数验证领域公式、搜索结果、线程一致性、后端一致性及控制回调契约。
+ */
+#include "core/domain.hpp"
 #include "slimeseeker/slimeseeker.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace {

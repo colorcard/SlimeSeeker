@@ -1,3 +1,4 @@
+# SlimeSeeker 顶层构建入口：定义核心库、CLI、测试、基准和安装导出。
 cmake_minimum_required(VERSION 3.24)
 project(SlimeSeeker VERSION 1.0.0 LANGUAGES C CXX)
 
@@ -9,15 +10,20 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 源码与公共头文件包含中文说明，MSVC 需显式按 UTF-8 解码以避免依赖系统代码页。
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
+
 set(SS_LIBRARY_TYPE STATIC)
 if(SLIMESEEKER_BUILD_SHARED)
   set(SS_LIBRARY_TYPE SHARED)
 endif()
 
 add_library(slimeseeker ${SS_LIBRARY_TYPE}
-  src/core.cpp
-  src/search.cpp
-  src/c_api.cpp
+  src/core/domain.cpp
+  src/engine/search.cpp
+  src/api/c_api.cpp
   src/backends/scalar.cpp
   src/backends/dispatch.cpp)
 add_library(SlimeSeeker::slimeseeker ALIAS slimeseeker)
@@ -52,7 +58,7 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(slimeseeker PRIVATE Threads::Threads)
 
-add_executable(slimeseeker_cli src/cli.cpp)
+add_executable(slimeseeker_cli apps/cli/main.cpp)
 set_target_properties(slimeseeker_cli PROPERTIES OUTPUT_NAME slimeseeker)
 target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker)
 
@@ -75,15 +81,15 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/SlimeSeekerConfig.cmake
 
 if(SLIMESEEKER_BUILD_TESTS)
   enable_testing()
-  add_executable(slimeseeker_tests tests/tests.cpp)
-  target_include_directories(slimeseeker_tests PRIVATE src)
-  target_link_libraries(slimeseeker_tests PRIVATE SlimeSeeker::slimeseeker)
-  add_test(NAME slimeseeker_tests COMMAND slimeseeker_tests)
+  add_executable(slimeseeker_unit_tests tests/unit/tests.cpp)
+  target_include_directories(slimeseeker_unit_tests PRIVATE src)
+  target_link_libraries(slimeseeker_unit_tests PRIVATE SlimeSeeker::slimeseeker)
+  add_test(NAME unit_tests COMMAND slimeseeker_unit_tests)
   add_test(NAME cli_help COMMAND slimeseeker_cli --help)
-  add_executable(slimeseeker_regression tests/regression.cpp)
+  add_executable(slimeseeker_regression tests/regression/golden.cpp)
   target_link_libraries(slimeseeker_regression PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME full_golden_regression COMMAND slimeseeker_regression)
-  add_executable(slimeseeker_c_api_smoke tests/c_api_smoke.c)
+  add_executable(slimeseeker_c_api_smoke tests/integration/c_api_smoke.c)
   set_target_properties(slimeseeker_c_api_smoke PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(slimeseeker_c_api_smoke PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME c_api_smoke COMMAND slimeseeker_c_api_smoke)

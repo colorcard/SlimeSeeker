@@ -1,8 +1,15 @@
-#include "internal.hpp"
+/*
+ * CPU 算子能力检测与运行时分派。
+ *
+ * 显式后端只检查硬件支持；auto 还会对拍并校准性能，避免“支持 SIMD”却实际降速。
+ */
+#include "backends/backend.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <vector>
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif

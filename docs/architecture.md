@@ -1,5 +1,24 @@
 # SlimeSeeker 架构
 
+## 目录职责
+
+```text
+apps/cli/          命令行应用，只通过公共 ABI 使用核心库
+src/core/          Minecraft 数学规则与圆环几何
+src/engine/        tile、SAT、线程调度与结果管线
+src/backends/      scalar、AVX2、NEON 算子及运行时分派
+src/api/           公共 C ABI 的参数校验与异常隔离
+include/slimeseeker/ 唯一对外头文件
+tests/unit/        领域、搜索和控制契约的快速测试
+tests/integration/ 纯 C 等跨边界集成验证
+tests/regression/  大范围固定黄金结果回归
+benchmarks/        分阶段及端到端性能基准
+```
+
+依赖方向固定为 `apps/api → engine → core + backends`；后端可以复用 core 的精确判定，
+但 core 不反向依赖 engine、API 或具体后端。测试和基准可以通过私有 include 路径对白盒接口
+做验证，这些内部头文件不会随安装包导出。
+
 ## 设计依据
 
 搜索成本由“候选中心数”和“生成其周围史莱姆区块状态”决定。前者无法在不改变语义的情况下省略，因此架构围绕四个不变量设计：数学结果必须逐位兼容 Java、工作集应适合 CPU cache、并行任务之间不共享热数据、专用指令集不能污染通用构建。

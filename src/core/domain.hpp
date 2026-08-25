@@ -1,10 +1,13 @@
+/*
+ * Minecraft 史莱姆区块领域模型内部接口。
+ *
+ * 集中定义定宽回绕、Java LCG 常量、区块种子分解和圆环几何。该头文件仅供项目内部
+ * 使用；稳定的对外接口位于 include/slimeseeker/slimeseeker.h。
+ */
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cstdint>
-#include <span>
-#include <vector>
 #include "slimeseeker/slimeseeker.h"
 
 namespace ss {
@@ -42,19 +45,13 @@ constexpr uint64_t zbase(int64_t seed, int32_t z) {
 constexpr int64_t chunk_seed(int64_t seed, int32_t x, int32_t z) {
     return static_cast<int64_t>((zbase(seed, z) + xterm(x)) ^ kChunkXor);
 }
+
 bool is_slime_from_chunk_seed(int64_t seed);
-inline bool is_slime(int64_t seed, int32_t x, int32_t z) { return is_slime_from_chunk_seed(chunk_seed(seed, x, z)); }
+inline bool is_slime(int64_t seed, int32_t x, int32_t z) {
+    return is_slime_from_chunk_seed(chunk_seed(seed, x, z));
+}
 const Runs &donut_runs();
 bool in_donut(int dx, int dz);
 
-using BuildMapFn = void (*)(int64_t, int32_t, int32_t, int, int, uint8_t *);
-void build_map_scalar(int64_t, int32_t, int32_t, int, int, uint8_t *);
-void build_map_avx2(int64_t, int32_t, int32_t, int, int, uint8_t *);
-void build_map_neon(int64_t, int32_t, int32_t, int, int, uint8_t *);
-bool cpu_has_avx2();
-bool cpu_has_neon();
-BuildMapFn select_backend(ss_backend requested, ss_backend &selected);
-
-ss_status search_impl(const ss_search_params_v1 &, const ss_search_options_v1 &, const ss_callbacks_v1 &);
-
 } // namespace ss
+

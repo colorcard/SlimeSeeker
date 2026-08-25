@@ -1,3 +1,4 @@
+# SlimeSeeker 安装包入口：恢复导出目标及其线程依赖。
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)

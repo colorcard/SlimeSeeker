@@ -1,4 +1,12 @@
-#include "internal.hpp"
+/*
+ * SlimeSeeker 公共 C ABI 实现。
+ *
+ * 负责结构版本、参数边界、默认值和异常到状态码的转换；不在 ABI 层实现搜索算法，
+ * 也不允许 C++ 类型或异常穿越公共边界。
+ */
+#include "core/domain.hpp"
+#include "engine/search.hpp"
+#include "backends/backend.hpp"
 #include <cstddef>
 #include <new>
 

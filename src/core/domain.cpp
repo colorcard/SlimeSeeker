@@ -1,4 +1,10 @@
-#include "internal.hpp"
+/*
+ * Minecraft Java Edition 史莱姆区块领域规则实现。
+ *
+ * 本文件维护精确 Java LCG、nextInt rejection sampling 和圆环段表，不依赖线程、
+ * 命令行或具体指令集，是所有搜索后端共享的正确性基线。
+ */
+#include "core/domain.hpp"
 #include <stdexcept>
 
 namespace ss {

@@ -1,3 +1,8 @@
+/*
+ * 纯 C 调用集成测试入口。
+ *
+ * 由 C 编译器编译，用于防止公共头文件意外依赖 C++ 语法，并验证 C ABI 可链接运行。
+ */
 #include <slimeseeker/slimeseeker.h>
 #include <string.h>
 
