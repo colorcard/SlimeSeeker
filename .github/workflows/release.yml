@@ -1,0 +1,91 @@
+# 正式发行构建入口：从指定标签构建、测试并把跨平台安装包附加到既有 GitHub Release。
+name: release-binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package
+        required: true
+        default: v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x86_64
+            archive: tar
+          - os: windows-latest
+            suffix: windows-x86_64
+            archive: zip
+          - os: macos-14
+            suffix: macos-arm64
+            archive: tar
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Package Unix
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          version="${{ inputs.tag }}"
+          package="slimeseeker-${version#v}-${{ matrix.suffix }}"
+          cmake --install build --config Release --prefix "$package"
+          tar -czf "$package.tar.gz" "$package"
+          gh release upload "${{ inputs.tag }}" "$package.tar.gz" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Package Windows
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.tag }}".TrimStart('v')
+          $package = "slimeseeker-$version-${{ matrix.suffix }}"
+          cmake --install build --config Release --prefix $package
+          Compress-Archive -Path $package -DestinationPath "$package.zip"
+          gh release upload "${{ inputs.tag }}" "$package.zip" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Install cross compiler
+        run: sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu
+      - name: Configure
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64
+          -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+          -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+          -DSLIMESEEKER_BUILD_TESTS=OFF
+          -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Package and upload
+        shell: bash
+        run: |
+          version="${{ inputs.tag }}"
+          package="slimeseeker-${version#v}-linux-arm64"
+          cmake --install build --prefix "$package"
+          tar -czf "$package.tar.gz" "$package"
+          gh release upload "${{ inputs.tag }}" "$package.tar.gz" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

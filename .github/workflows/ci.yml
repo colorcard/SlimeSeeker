@@ -20,6 +20,14 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Install
+        run: cmake --install build --config Release --prefix stage
+      - name: Upload native package
+        uses: actions/upload-artifact@v4
+        with:
+          name: slimeseeker-${{ runner.os }}-${{ runner.arch }}
+          path: stage/
+          if-no-files-found: error
 
   linux-arm64-compile:
     runs-on: ubuntu-latest
@@ -36,6 +44,14 @@ jobs:
           -DSLIMESEEKER_BUILD_TESTS=OFF
       - name: Build
         run: cmake --build build-arm64 --parallel
+      - name: Install
+        run: cmake --install build-arm64 --prefix stage-arm64
+      - name: Upload Linux arm64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: slimeseeker-Linux-ARM64
+          path: stage-arm64/
+          if-no-files-found: error
 
   sanitizers:
     runs-on: ubuntu-latest
