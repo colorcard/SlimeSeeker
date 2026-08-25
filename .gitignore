@@ -1,0 +1,10 @@
+/build*/
+/out/
+/.cache/
+.idea/
+.vscode/
+.DS_Store
+
+# Local reference implementation and generated search output.
+/refer/
+/*.csv
