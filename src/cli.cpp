@@ -16,6 +16,7 @@ std::atomic<bool> interrupted{false};
 
 struct Better {
     bool operator()(const ss_result &a, const ss_result &b) const {
+        // 与参考实现保持一致的全序，确保线程调度变化不会改变最终输出。
         if (a.count != b.count) return a.count > b.count;
         const int64_t da = static_cast<int64_t>(a.x) * a.x + static_cast<int64_t>(a.z) * a.z;
         const int64_t db = static_cast<int64_t>(b.x) * b.x + static_cast<int64_t>(b.z) * b.z;
@@ -51,6 +52,7 @@ int receive_results(void *opaque, const ss_result *results, size_t count) {
         ctx.all.insert(ctx.all.end(), results, results + count);
     } else {
         for (size_t i = 0; i < count; ++i) {
+            // priority_queue 顶部是当前最差结果，因而 Top-K 始终只占 O(K) 内存。
             if (ctx.top.size() < ctx.top_count) ctx.top.push(results[i]);
             else if (Better{}(results[i], ctx.top.top())) { ctx.top.pop(); ctx.top.push(results[i]); }
         }

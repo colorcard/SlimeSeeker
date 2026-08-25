@@ -6,6 +6,8 @@ namespace ss {
 bool is_slime_from_chunk_seed(int64_t chunk_seed_value) {
     uint64_t state = (static_cast<uint64_t>(chunk_seed_value) ^ kLcgMul) & kLcgMask;
     for (;;) {
+        // 精确复刻 java.util.Random.nextInt(10)。尾部 8 个值必须拒绝重抽，
+        // 不能简化成一次 bits % 10，否则极低概率下会与游戏结果不一致。
         state = (state * kLcgMul + kLcgAdd) & kLcgMask;
         const uint32_t bits = static_cast<uint32_t>(state >> 17);
         const uint32_t value = bits % 10u;
@@ -19,6 +21,7 @@ bool in_donut(int dx, int dz) {
 }
 
 const Runs &donut_runs() {
+    // 从几何定义生成段表，而不是手写常量，避免掩码与优化查询逻辑漂移。
     static const Runs runs = [] {
         Runs result{};
         size_t index = 0;
@@ -46,4 +49,3 @@ const Runs &donut_runs() {
 }
 
 } // namespace ss
-

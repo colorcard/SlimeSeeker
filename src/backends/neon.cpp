@@ -8,6 +8,7 @@ void build_map_neon(int64_t seed, int32_t x0, int32_t z0, int width, int height,
     int x = 0;
     const int32x4_t offsets = {0, 1, 2, 3};
     for (; x + 4 <= width; x += 4) {
+        // arm64 NEON 批量生成四列 xterm，并分别符号扩展两项以保持 Java int 语义。
         const int32x4_t vx = vaddq_s32(vdupq_n_s32(x0 + x), offsets);
         const int32x4_t square = vmulq_s32(vx, vx);
         const int32x4_t a = vmulq_n_s32(square, 4987142);

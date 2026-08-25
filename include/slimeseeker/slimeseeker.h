@@ -38,6 +38,7 @@ typedef enum ss_backend {
     SS_BACKEND_NEON = 3
 } ss_backend;
 
+/* 搜索中心采用半开区间 [begin,end)；实现会在四周额外读取 8 个区块。 */
 typedef struct ss_search_params_v1 {
     uint32_t struct_size;
     int64_t world_seed;
@@ -63,6 +64,8 @@ typedef struct ss_result {
     uint16_t reserved;
 } ss_result;
 
+/* on_results 返回非零会以 SS_CALLBACK_ABORTED 终止。
+ * 三类回调均由调用 ss_search 的线程串行触发，无需调用方额外加锁。 */
 typedef int (*ss_results_fn)(void *context, const ss_result *results, size_t count);
 typedef void (*ss_progress_fn)(void *context, uint64_t completed, uint64_t total);
 typedef int (*ss_cancel_fn)(void *context);
@@ -79,6 +82,7 @@ SS_API const char *ss_version(void);
 SS_API const char *ss_status_string(ss_status status);
 SS_API const char *ss_backend_name(ss_backend backend);
 SS_API int ss_backend_available(ss_backend backend);
+/* options/callbacks 可传 NULL 使用默认值；所有传入结构必须正确填写 struct_size。 */
 SS_API ss_status ss_search(const ss_search_params_v1 *params,
                            const ss_search_options_v1 *options,
                            const ss_callbacks_v1 *callbacks);
@@ -87,4 +91,3 @@ SS_API ss_status ss_search(const ss_search_params_v1 *params,
 }
 #endif
 #endif
-

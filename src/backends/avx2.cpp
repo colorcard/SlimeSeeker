@@ -11,6 +11,7 @@ void build_map_avx2(int64_t seed, int32_t x0, int32_t z0, int width, int height,
     const __m256i c2 = _mm256_set1_epi32(5947611);
     alignas(32) int32_t terms_a[8], terms_b[8];
     for (; x + 8 <= width; x += 8) {
+        // 只向量化有原生支持的 8×i32 回绕乘法；LCG 的精确 rejection 仍复用标量黄金实现。
         const __m256i vx = _mm256_add_epi32(_mm256_set1_epi32(x0 + x), offsets);
         const __m256i t1 = _mm256_mullo_epi32(_mm256_mullo_epi32(vx, vx), c1);
         const __m256i t2 = _mm256_mullo_epi32(vx, c2);

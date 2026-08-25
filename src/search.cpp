@@ -11,6 +11,8 @@ namespace ss {
 namespace {
 
 struct BatchQueue {
+    // worker 只向队列提交批次；用户回调由调用线程串行执行。
+    // 有界容量既限制低阈值搜索的瞬时内存，也为慢消费者提供背压。
     std::mutex mutex;
     std::condition_variable readable;
     std::condition_variable writable;
@@ -40,6 +42,7 @@ struct Shared {
 
 uint16_t rectangle_sum(const uint16_t *sat, size_t stride,
                        int z0, int x0, int z1, int x1) {
+    // SAT 总值可以超过 uint16_t，但查询窗口至多 289 格；四项差分在模 2^16 下仍精确。
     return static_cast<uint16_t>(sat[static_cast<size_t>(z1) * stride + x1]
         - sat[static_cast<size_t>(z0) * stride + x1]
         - sat[static_cast<size_t>(z1) * stride + x0]
@@ -54,6 +57,7 @@ bool submit(Shared &shared, std::vector<ss_result> &batch) {
     });
     if (shared.stop.load(std::memory_order_relaxed)) return false;
     shared.queue.batches.emplace_back();
+    // 交换而非复制批次，worker 随后重新预留自己的下一批缓冲。
     shared.queue.batches.back().swap(batch);
     lock.unlock();
     shared.queue.readable.notify_one();
@@ -74,11 +78,13 @@ void process_tile(Shared &shared, uint64_t tile_index, std::vector<ss_result> &b
     const int32_t bx = static_cast<int32_t>(bx64);
     const int32_t bz = static_cast<int32_t>(bz64);
 
+    // (bx,bz) 是第一个候选中心；位图向左上扩展 8 格，保证边缘中心也有完整窗口。
     std::vector<uint8_t> map(static_cast<size_t>(mw) * mh);
     std::vector<uint16_t> sat(static_cast<size_t>(mw + 1) * (mh + 1), 0);
     shared.build_map(p.world_seed, bx - kRadius, bz - kRadius, mw, mh, map.data());
 
     const size_t stride = static_cast<size_t>(mw + 1);
+    // 融合行前缀与上一行 SAT，避免额外保存中间行前缀数组。
     for (int z = 0; z < mh; ++z) {
         uint16_t row_sum = 0;
         for (int x = 0; x < mw; ++x) {
@@ -91,6 +97,7 @@ void process_tile(Shared &shared, uint64_t tile_index, std::vector<ss_result> &b
     const auto &runs = donut_runs();
     for (int z = 0; z < cz && !shared.stop.load(std::memory_order_relaxed); ++z) {
         for (int x = 0; x < cx; ++x) {
+            // 圆环是 17×17 方框的子集；方框尚未达到阈值时可安全跳过 20 段精确查询。
             if (rectangle_sum(sat.data(), stride, z, x, z + kWindow, x + kWindow) < p.threshold) continue;
             uint16_t count = 0;
             for (const auto &run : runs) {
@@ -111,6 +118,7 @@ void worker(Shared &shared) noexcept {
         std::vector<ss_result> batch;
         batch.reserve(shared.batch_capacity);
         while (!shared.stop.load(std::memory_order_relaxed)) {
+            // 动态领取 tile，避免边缘 tile 和不同命中密度造成静态分片尾部失衡。
             const uint64_t tile = shared.next_tile.fetch_add(1, std::memory_order_relaxed);
             if (tile >= shared.tile_count) break;
             process_tile(shared, tile, batch);
@@ -171,6 +179,7 @@ ss_status search_impl(const ss_search_params_v1 &params, const ss_search_options
 
     ss_status status = SS_OK;
     uint64_t last_progress = UINT64_MAX;
+    // 调用线程同时负责消费结果、轮询取消和发送进度，因此所有用户回调天然串行。
     for (;;) {
         if (callbacks.should_cancel && callbacks.should_cancel(callbacks.context)) {
             status = SS_CANCELLED;

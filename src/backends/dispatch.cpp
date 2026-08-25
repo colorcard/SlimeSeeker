@@ -46,6 +46,8 @@ void build_map_neon(int64_t s, int32_t x, int32_t z, int w, int h, uint8_t *o) {
 #endif
 
 static BuildMapFn calibrated(BuildMapFn candidate) {
+    // 指令集可用不等于一定更快：AVX2/NEON 对 64 位 LCG 乘法的收益高度依赖 CPU。
+    // 用固定输入先对拍，再以中位数过滤冷启动抖动；不足 5% 的收益仍选择标量。
     constexpr int width = 256, height = 128;
     std::vector<uint8_t> baseline(width * height), trial(width * height);
     using clock = std::chrono::steady_clock;
@@ -68,6 +70,7 @@ static BuildMapFn calibrated(BuildMapFn candidate) {
 }
 
 BuildMapFn select_backend(ss_backend requested, ss_backend &selected) {
+    // 显式选择只做能力检查，不做性能门槛判断，便于测试与可复现基准。
     if (requested == SS_BACKEND_SCALAR) { selected = SS_BACKEND_SCALAR; return build_map_scalar; }
     if (requested == SS_BACKEND_AVX2) {
         if (!cpu_has_avx2()) return nullptr;
@@ -79,6 +82,7 @@ BuildMapFn select_backend(ss_backend requested, ss_backend &selected) {
     }
     if (requested != SS_BACKEND_AUTO) return nullptr;
 
+    // 自动校准每个进程只执行一次，后续搜索直接复用选择结果。
     static std::once_flag once;
     static BuildMapFn choice = build_map_scalar;
     static ss_backend choice_name = SS_BACKEND_SCALAR;
