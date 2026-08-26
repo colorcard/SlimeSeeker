@@ -6,10 +6,15 @@
 #include "core/domain.hpp"
 #include "slimeseeker/slimeseeker.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -159,15 +164,20 @@ struct ControlContext {
     bool valid_progress = true;
     int batches = 0;
     int progress_calls = 0;
+    size_t max_batch = 0;
+    std::thread::id caller = std::this_thread::get_id();
+    bool caller_thread_only = true;
     std::vector<ss_result> results;
 };
 int abort_results(void *opaque, const ss_result *, size_t) {
     auto &ctx = *static_cast<ControlContext *>(opaque);
+    ctx.caller_thread_only &= ctx.caller == std::this_thread::get_id();
     ++ctx.batches;
     return 1;
 }
 void progress(void *opaque, uint64_t completed, uint64_t) {
     auto &ctx = *static_cast<ControlContext *>(opaque);
+    ctx.caller_thread_only &= ctx.caller == std::this_thread::get_id();
     ++ctx.progress_calls;
     if (completed < ctx.last) ctx.monotonic = false;
     ctx.last = completed;
@@ -176,13 +186,16 @@ int cancel_now(void *) { return 1; }
 
 int collect_controlled(void *opaque, const ss_result *results, size_t count) {
     auto &ctx = *static_cast<ControlContext *>(opaque);
+    ctx.caller_thread_only &= ctx.caller == std::this_thread::get_id();
     ++ctx.batches;
+    ctx.max_batch = std::max(ctx.max_batch, count);
     ctx.results.insert(ctx.results.end(), results, results + count);
     return 0;
 }
 
 void contract_progress(void *opaque, uint64_t completed, uint64_t total) {
     auto &ctx = *static_cast<ControlContext *>(opaque);
+    ctx.caller_thread_only &= ctx.caller == std::this_thread::get_id();
     ++ctx.progress_calls;
     if (completed < ctx.last || completed > total) ctx.monotonic = false;
     if (ctx.total != 0 && ctx.total != total) ctx.valid_progress = false;
@@ -192,10 +205,53 @@ void contract_progress(void *opaque, uint64_t completed, uint64_t total) {
 
 ss_status run_controlled(const ss_search_params_v1 &params, ss_backend backend,
                          ControlContext &ctx, ss_results_fn on_results,
-                         ss_progress_fn on_progress, ss_cancel_fn should_cancel) {
-    ss_search_options_v1 options{sizeof(options), 2, backend, 31};
+                         ss_progress_fn on_progress, ss_cancel_fn should_cancel,
+                         uint32_t batch_capacity = 31) {
+    ss_search_options_v1 options{sizeof(options), 2, backend, batch_capacity};
     ss_callbacks_v1 callbacks{
         sizeof(callbacks), &ctx, on_results, on_progress, should_cancel};
+    return ss_search(&params, &options, &callbacks);
+}
+
+struct BlockingContext {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool entered = false;
+    bool released = false;
+};
+
+int block_first_results(void *opaque, const ss_result *, size_t) {
+    auto &ctx = *static_cast<BlockingContext *>(opaque);
+    std::unique_lock lock(ctx.mutex);
+    if (!ctx.entered) {
+        ctx.entered = true;
+        ctx.condition.notify_all();
+        ctx.condition.wait(lock, [&] { return ctx.released; });
+    }
+    return 0;
+}
+
+struct DelayedCancelContext { std::atomic<unsigned> calls{0}; };
+
+int cancel_after_initial_check(void *opaque) {
+    auto &ctx = *static_cast<DelayedCancelContext *>(opaque);
+    return ctx.calls.fetch_add(1, std::memory_order_relaxed) != 0;
+}
+
+struct ReentryContext { ss_status nested_status = SS_OK; };
+
+int reenter_cuda_results(void *opaque, const ss_result *, size_t) {
+    auto &ctx = *static_cast<ReentryContext *>(opaque);
+    ss_search_params_v1 params{sizeof(params), 0, -1, 1, -1, 1, 45, 0};
+    ss_search_options_v1 options{sizeof(options), 1, SS_BACKEND_CUDA, 8};
+    ctx.nested_status = ss_search(&params, &options, nullptr);
+    return 1;
+}
+
+ss_status collect_without_checks(const ss_search_params_v1 &params, ss_backend backend,
+                                 std::vector<ss_result> &results) {
+    ss_search_options_v1 options{sizeof(options), 1, backend, 17};
+    ss_callbacks_v1 callbacks{sizeof(callbacks), &results, collect, nullptr, nullptr};
     return ss_search(&params, &options, &callbacks);
 }
 
@@ -214,7 +270,8 @@ void test_search_backend_contract(ss_backend backend) {
     CHECK(empty_ctx.monotonic && empty_ctx.valid_progress);
 
     // 负坐标与三条 CPU 阈值管线边界都必须和 scalar 黄金后端逐项一致。
-    for (uint16_t threshold : {uint16_t{0}, uint16_t{30}, uint16_t{45}, uint16_t{192}}) {
+    for (uint16_t threshold : {uint16_t{0}, uint16_t{30}, uint16_t{31}, uint16_t{40},
+                               uint16_t{41}, uint16_t{45}, uint16_t{192}}) {
         const auto expected = run(seed, -37, 29, -31, 23, threshold, 1, SS_BACKEND_SCALAR);
         const auto actual = run(seed, -37, 29, -31, 23, threshold, 2, backend);
         CHECK(same_results(expected, actual));
@@ -234,19 +291,131 @@ void test_search_backend_contract(ss_backend backend) {
     CHECK(same_results(expected, dense_ctx.results));
     CHECK(dense_ctx.last == dense_total && dense_ctx.total == dense_total);
     CHECK(dense_ctx.progress_calls > 0);
-    CHECK(dense_ctx.monotonic && dense_ctx.valid_progress);
+    CHECK(dense_ctx.monotonic && dense_ctx.valid_progress && dense_ctx.caller_thread_only);
 
-    ss_search_params_v1 controlled{sizeof(controlled), seed, -100, 100, -100, 100, 0, 0};
+    // 第5个窄tile跨越固定四tile批次，验证双slot轮换和partial tile坐标映射。
+    ss_search_params_v1 batch_edge{
+        sizeof(batch_edge), seed, -37, -37 + 4 * ss::kTileCenters + 17, -4, -1, 0, 0};
+    const auto batch_expected = run(seed, batch_edge.x_begin, batch_edge.x_end,
+                                    batch_edge.z_begin, batch_edge.z_end,
+                                    batch_edge.threshold, 1, SS_BACKEND_SCALAR);
+    const auto batch_actual = run(seed, batch_edge.x_begin, batch_edge.x_end,
+                                  batch_edge.z_begin, batch_edge.z_end,
+                                  batch_edge.threshold, 1, backend);
+    CHECK(same_results(batch_expected, batch_actual));
+
+    // 回调容量只改变交付切片，不能改变结果、超过容量或遗漏密集命中。
+    ss_search_params_v1 capacities{sizeof(capacities), seed, -29, 41, -13, 17, 0, 0};
+    const auto capacity_expected = run(seed, capacities.x_begin, capacities.x_end,
+                                       capacities.z_begin, capacities.z_end,
+                                       capacities.threshold, 1, SS_BACKEND_SCALAR);
+    for (uint32_t capacity : {1u, 31u, 1024u, 300000u}) {
+        ControlContext capacity_ctx;
+        CHECK(run_controlled(capacities, backend, capacity_ctx, collect_controlled,
+                             nullptr, nullptr, capacity) == SS_OK);
+        std::sort(capacity_ctx.results.begin(), capacity_ctx.results.end(), result_less);
+        CHECK(same_results(capacity_expected, capacity_ctx.results));
+        CHECK(capacity_ctx.max_batch <= capacity);
+        CHECK(capacity_ctx.caller_thread_only);
+    }
+
+    ss_search_params_v1 controlled{
+        sizeof(controlled), seed, -100, -100 + 4 * ss::kTileCenters + 17, -2, 0, 0, 0};
     ControlContext abort_ctx;
     CHECK(run_controlled(controlled, backend, abort_ctx, abort_results,
                          contract_progress, nullptr) == SS_CALLBACK_ABORTED);
     CHECK(abort_ctx.batches == 1);
-    CHECK(abort_ctx.monotonic && abort_ctx.valid_progress);
+    CHECK(abort_ctx.monotonic && abort_ctx.valid_progress && abort_ctx.caller_thread_only);
 
     ControlContext cancel_ctx;
     CHECK(run_controlled(controlled, backend, cancel_ctx, nullptr,
                          contract_progress, cancel_now) == SS_CANCELLED);
     CHECK(cancel_ctx.results.empty());
+
+    if (backend != SS_BACKEND_CUDA) return;
+
+    // 中止时另一个slot可能仍在执行；后续搜索必须能复用已安全收敛的workspace。
+    const auto recovery_expected = run(seed + 1, -73, 61, -59, 47, 35, 1, SS_BACKEND_SCALAR);
+    const auto recovery_actual = run(seed + 1, -73, 61, -59, 47, 35, 1, SS_BACKEND_CUDA);
+    CHECK(same_results(recovery_expected, recovery_actual));
+
+    // 单workspace不能在结果回调栈内重入；应明确失败而不是等待自身租约形成死锁。
+    ReentryContext reentry;
+    ss_search_params_v1 reentry_params{
+        sizeof(reentry_params), seed, -30, 30, -30, 30, 0, 0};
+    ss_search_options_v1 reentry_options{
+        sizeof(reentry_options), 1, SS_BACKEND_CUDA, 8};
+    ss_callbacks_v1 reentry_callbacks{
+        sizeof(reentry_callbacks), &reentry, reenter_cuda_results, nullptr, nullptr};
+    CHECK(ss_search(&reentry_params, &reentry_options, &reentry_callbacks) ==
+          SS_CALLBACK_ABORTED);
+    CHECK(reentry.nested_status == SS_INTERNAL_ERROR);
+
+    // 两个调用线程竞争单workspace时应串行完成，且不同seed之间不能串扰。
+    ss_search_params_v1 concurrent_a{
+        sizeof(concurrent_a), seed + 2, -520, 520, -517, 523, 45, 0};
+    ss_search_params_v1 concurrent_b{
+        sizeof(concurrent_b), seed + 3, -513, 527, -509, 531, 45, 0};
+    const auto concurrent_expected_a = run(
+        concurrent_a.world_seed, concurrent_a.x_begin, concurrent_a.x_end,
+        concurrent_a.z_begin, concurrent_a.z_end, concurrent_a.threshold, 2, SS_BACKEND_SCALAR);
+    const auto concurrent_expected_b = run(
+        concurrent_b.world_seed, concurrent_b.x_begin, concurrent_b.x_end,
+        concurrent_b.z_begin, concurrent_b.z_end, concurrent_b.threshold, 2, SS_BACKEND_SCALAR);
+    std::vector<ss_result> concurrent_actual_a, concurrent_actual_b;
+    ss_status concurrent_status_a = SS_INTERNAL_ERROR;
+    ss_status concurrent_status_b = SS_INTERNAL_ERROR;
+    std::thread thread_a([&] {
+        concurrent_status_a = collect_without_checks(
+            concurrent_a, SS_BACKEND_CUDA, concurrent_actual_a);
+    });
+    std::thread thread_b([&] {
+        concurrent_status_b = collect_without_checks(
+            concurrent_b, SS_BACKEND_CUDA, concurrent_actual_b);
+    });
+    thread_a.join();
+    thread_b.join();
+    std::sort(concurrent_actual_a.begin(), concurrent_actual_a.end(), result_less);
+    std::sort(concurrent_actual_b.begin(), concurrent_actual_b.end(), result_less);
+    CHECK(concurrent_status_a == SS_OK && concurrent_status_b == SS_OK);
+    CHECK(same_results(concurrent_expected_a, concurrent_actual_a));
+    CHECK(same_results(concurrent_expected_b, concurrent_actual_b));
+
+    // workspace被另一调用占用时，等待者仍在自己的调用线程轮询并响应取消。
+    BlockingContext blocking;
+    ss_search_params_v1 blocking_params{
+        sizeof(blocking_params), seed, -100, -100 + 4 * ss::kTileCenters + 17, -2, 0, 0, 0};
+    ss_search_options_v1 blocking_options{
+        sizeof(blocking_options), 1, SS_BACKEND_CUDA, 31};
+    ss_callbacks_v1 blocking_callbacks{
+        sizeof(blocking_callbacks), &blocking, block_first_results, nullptr, nullptr};
+    ss_status blocking_status = SS_INTERNAL_ERROR;
+    std::thread blocking_thread([&] {
+        blocking_status = ss_search(&blocking_params, &blocking_options, &blocking_callbacks);
+    });
+    {
+        std::unique_lock lock(blocking.mutex);
+        CHECK(blocking.condition.wait_for(lock, std::chrono::seconds(5), [&] {
+            return blocking.entered;
+        }));
+    }
+    DelayedCancelContext delayed_cancel;
+    ss_search_params_v1 waiting_params{
+        sizeof(waiting_params), seed, -50, 50, -50, 50, 45, 0};
+    ss_search_options_v1 waiting_options{
+        sizeof(waiting_options), 1, SS_BACKEND_CUDA, 31};
+    ss_callbacks_v1 waiting_callbacks{
+        sizeof(waiting_callbacks), &delayed_cancel, nullptr, nullptr,
+        cancel_after_initial_check};
+    CHECK(ss_search(&waiting_params, &waiting_options, &waiting_callbacks) == SS_CANCELLED);
+    CHECK(delayed_cancel.calls.load(std::memory_order_relaxed) >= 2);
+    {
+        std::lock_guard lock(blocking.mutex);
+        blocking.released = true;
+    }
+    blocking.condition.notify_all();
+    blocking_thread.join();
+    CHECK(blocking_status == SS_OK);
 }
 
 void test_control_contracts() {
