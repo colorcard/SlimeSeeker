@@ -17,9 +17,21 @@ int failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr); ++failures; } } while (0)
 
 bool result_less(const ss_result &a, const ss_result &b) {
-    if (a.z != b.z) return a.z < b.z;
+    if (a.count != b.count) return a.count > b.count;
+    const uint64_t da = static_cast<uint64_t>(static_cast<int64_t>(a.x) * a.x) +
+                        static_cast<uint64_t>(static_cast<int64_t>(a.z) * a.z);
+    const uint64_t db = static_cast<uint64_t>(static_cast<int64_t>(b.x) * b.x) +
+                        static_cast<uint64_t>(static_cast<int64_t>(b.z) * b.z);
+    if (da != db) return da < db;
     if (a.x != b.x) return a.x < b.x;
-    return a.count < b.count;
+    return a.z < b.z;
+}
+
+bool same_results(const std::vector<ss_result> &a, const std::vector<ss_result> &b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const auto &x, const auto &y) {
+               return x.x == y.x && x.z == y.z && x.count == y.count;
+           });
 }
 
 unsigned naive_count(int64_t seed, int32_t x, int32_t z) {
@@ -124,34 +136,12 @@ void test_differential_search() {
 void test_threads_and_backends() {
     const auto scalar = run(5023147298867078368LL, -260, 271, -253, 267, 35, 1, SS_BACKEND_SCALAR);
     const auto parallel = run(5023147298867078368LL, -260, 271, -253, 267, 35, 4, SS_BACKEND_SCALAR);
-    CHECK(scalar.size() == parallel.size());
-    CHECK(std::equal(scalar.begin(), scalar.end(), parallel.begin(), parallel.end(), [](auto a, auto b) {
-        return a.x == b.x && a.z == b.z && a.count == b.count;
-    }));
+    CHECK(same_results(scalar, parallel));
     for (ss_backend backend : {SS_BACKEND_AVX2, SS_BACKEND_NEON}) {
         if (!ss_backend_available(backend)) continue;
         const auto specialized = run(5023147298867078368LL, -260, 271, -253, 267, 35, 2, backend);
-        CHECK(scalar.size() == specialized.size());
-        CHECK(std::equal(scalar.begin(), scalar.end(), specialized.begin(), specialized.end(), [](auto a, auto b) {
-            return a.x == b.x && a.z == b.z && a.count == b.count;
-        }));
+        CHECK(same_results(scalar, specialized));
     }
-}
-
-void test_cuda_backend_when_available() {
-    if (!ss_backend_available(SS_BACKEND_CUDA)) return;
-    const auto scalar = run(-184718958561915LL, -37, 521, -29, 509, 0, 1, SS_BACKEND_SCALAR);
-    const auto cuda = run(-184718958561915LL, -37, 521, -29, 509, 0, 1, SS_BACKEND_CUDA);
-    auto normalize = [](auto values) {
-        std::sort(values.begin(), values.end(), result_less);
-        return values;
-    };
-    const auto a = normalize(scalar);
-    const auto b = normalize(cuda);
-    CHECK(a.size() == b.size());
-    CHECK(std::equal(a.begin(), a.end(), b.begin(), b.end(), [](auto x, auto y) {
-        return x.x == y.x && x.z == y.z && x.count == y.count;
-    }));
 }
 
 void test_api_validation() {
@@ -164,8 +154,12 @@ void test_api_validation() {
 
 struct ControlContext {
     uint64_t last = 0;
+    uint64_t total = 0;
     bool monotonic = true;
+    bool valid_progress = true;
     int batches = 0;
+    int progress_calls = 0;
+    std::vector<ss_result> results;
 };
 int abort_results(void *opaque, const ss_result *, size_t) {
     auto &ctx = *static_cast<ControlContext *>(opaque);
@@ -174,10 +168,86 @@ int abort_results(void *opaque, const ss_result *, size_t) {
 }
 void progress(void *opaque, uint64_t completed, uint64_t) {
     auto &ctx = *static_cast<ControlContext *>(opaque);
+    ++ctx.progress_calls;
     if (completed < ctx.last) ctx.monotonic = false;
     ctx.last = completed;
 }
 int cancel_now(void *) { return 1; }
+
+int collect_controlled(void *opaque, const ss_result *results, size_t count) {
+    auto &ctx = *static_cast<ControlContext *>(opaque);
+    ++ctx.batches;
+    ctx.results.insert(ctx.results.end(), results, results + count);
+    return 0;
+}
+
+void contract_progress(void *opaque, uint64_t completed, uint64_t total) {
+    auto &ctx = *static_cast<ControlContext *>(opaque);
+    ++ctx.progress_calls;
+    if (completed < ctx.last || completed > total) ctx.monotonic = false;
+    if (ctx.total != 0 && ctx.total != total) ctx.valid_progress = false;
+    ctx.last = completed;
+    ctx.total = total;
+}
+
+ss_status run_controlled(const ss_search_params_v1 &params, ss_backend backend,
+                         ControlContext &ctx, ss_results_fn on_results,
+                         ss_progress_fn on_progress, ss_cancel_fn should_cancel) {
+    ss_search_options_v1 options{sizeof(options), 2, backend, 31};
+    ss_callbacks_v1 callbacks{
+        sizeof(callbacks), &ctx, on_results, on_progress, should_cancel};
+    return ss_search(&params, &options, &callbacks);
+}
+
+void test_search_backend_contract(ss_backend backend) {
+    if (!ss_backend_available(backend)) return;
+    constexpr int64_t seed = -184718958561915LL;
+
+    // 空区域仍须成功，并报告确定的 0/0 进度。
+    ss_search_params_v1 empty{sizeof(empty), seed, -7, -7, -9, 12, 45, 0};
+    ControlContext empty_ctx;
+    CHECK(run_controlled(empty, backend, empty_ctx, collect_controlled,
+                         contract_progress, nullptr) == SS_OK);
+    CHECK(empty_ctx.results.empty());
+    CHECK(empty_ctx.progress_calls == 1);
+    CHECK(empty_ctx.last == 0 && empty_ctx.total == 0);
+    CHECK(empty_ctx.monotonic && empty_ctx.valid_progress);
+
+    // 负坐标与三条 CPU 阈值管线边界都必须和 scalar 黄金后端逐项一致。
+    for (uint16_t threshold : {uint16_t{0}, uint16_t{30}, uint16_t{45}, uint16_t{192}}) {
+        const auto expected = run(seed, -37, 29, -31, 23, threshold, 1, SS_BACKEND_SCALAR);
+        const auto actual = run(seed, -37, 29, -31, 23, threshold, 2, backend);
+        CHECK(same_results(expected, actual));
+    }
+
+    // 阈值 0 填满一个 496x496 tile 并跨越双轴边界，验证结果不会因设备缓冲而截断。
+    ss_search_params_v1 dense{sizeof(dense), seed, -37, 521, -29, 509, 0, 0};
+    const auto expected = run(seed, dense.x_begin, dense.x_end, dense.z_begin, dense.z_end,
+                              dense.threshold, 1, SS_BACKEND_SCALAR);
+    ControlContext dense_ctx;
+    CHECK(run_controlled(dense, backend, dense_ctx, collect_controlled,
+                         contract_progress, nullptr) == SS_OK);
+    std::sort(dense_ctx.results.begin(), dense_ctx.results.end(), result_less);
+    const uint64_t dense_total =
+        static_cast<uint64_t>(dense.x_end - dense.x_begin) * (dense.z_end - dense.z_begin);
+    CHECK(dense_ctx.results.size() == dense_total);
+    CHECK(same_results(expected, dense_ctx.results));
+    CHECK(dense_ctx.last == dense_total && dense_ctx.total == dense_total);
+    CHECK(dense_ctx.progress_calls > 0);
+    CHECK(dense_ctx.monotonic && dense_ctx.valid_progress);
+
+    ss_search_params_v1 controlled{sizeof(controlled), seed, -100, 100, -100, 100, 0, 0};
+    ControlContext abort_ctx;
+    CHECK(run_controlled(controlled, backend, abort_ctx, abort_results,
+                         contract_progress, nullptr) == SS_CALLBACK_ABORTED);
+    CHECK(abort_ctx.batches == 1);
+    CHECK(abort_ctx.monotonic && abort_ctx.valid_progress);
+
+    ControlContext cancel_ctx;
+    CHECK(run_controlled(controlled, backend, cancel_ctx, nullptr,
+                         contract_progress, cancel_now) == SS_CANCELLED);
+    CHECK(cancel_ctx.results.empty());
+}
 
 void test_control_contracts() {
     ss_search_params_v1 params{sizeof(params), 0, -100, 100, -100, 100, 0, 0};
@@ -199,9 +269,10 @@ int main() {
     test_next_int10_rejection_path();
     test_differential_search();
     test_threads_and_backends();
-    test_cuda_backend_when_available();
     test_api_validation();
     test_control_contracts();
+    test_search_backend_contract(SS_BACKEND_SCALAR);
+    test_search_backend_contract(SS_BACKEND_CUDA);
     if (failures) std::fprintf(stderr, "%d test checks failed\n", failures);
     else std::printf("all tests passed\n");
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;
