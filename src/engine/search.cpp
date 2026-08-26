@@ -237,12 +237,10 @@ void worker(Shared &shared) noexcept {
 
 } // namespace
 
-ss_status search_impl(const ss_search_params_v1 &params, const ss_search_options_v1 &options,
-                      const ss_callbacks_v1 &callbacks) {
-    if (options.backend == SS_BACKEND_CUDA)
-        return search_cuda(params, options, callbacks);
+ss_status search_cpu_impl(const ss_search_params_v1 &params, const ss_search_options_v1 &options,
+                          const ss_callbacks_v1 &callbacks) {
     ss_backend selected{};
-    BuildMapFn build_map = select_backend(options.backend, selected);
+    BuildMapFn build_map = select_map_backend(options.backend, selected);
     if (!build_map) return SS_BACKEND_UNAVAILABLE;
 
     const uint64_t width = static_cast<uint64_t>(static_cast<int64_t>(params.x_end) - params.x_begin);

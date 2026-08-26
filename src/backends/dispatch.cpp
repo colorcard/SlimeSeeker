@@ -16,13 +16,6 @@
 
 namespace ss {
 
-#if !defined(SS_HAS_CUDA)
-bool cuda_available() { return false; }
-ss_status search_cuda(const ss_search_params_v1 &, const ss_search_options_v1 &, const ss_callbacks_v1 &) {
-    return SS_BACKEND_UNAVAILABLE;
-}
-#endif
-
 bool cpu_has_avx2() {
 #if defined(SS_HAS_AVX2_OBJECT) && (defined(__GNUC__) || defined(__clang__))
     __builtin_cpu_init();
@@ -84,7 +77,7 @@ static BuildMapFn calibrated(BuildMapFn candidate) {
     return candidate_ns * 100 < scalar_ns * 95 ? candidate : build_map_scalar;
 }
 
-BuildMapFn select_backend(ss_backend requested, ss_backend &selected) {
+BuildMapFn select_map_backend(ss_backend requested, ss_backend &selected) {
     // 显式选择只做能力检查，不做性能门槛判断，便于测试与可复现基准。
     if (requested == SS_BACKEND_SCALAR) { selected = SS_BACKEND_SCALAR; return build_map_scalar; }
     if (requested == SS_BACKEND_AVX2) {

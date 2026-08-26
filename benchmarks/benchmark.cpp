@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
     for (ss_backend backend : {SS_BACKEND_SCALAR, SS_BACKEND_AUTO, SS_BACKEND_AVX2, SS_BACKEND_NEON}) {
         if (!ss_backend_available(backend)) continue;
         ss_backend selected{};
-        auto map_fn = ss::select_backend(backend, selected);
+        auto map_fn = ss::select_map_backend(backend, selected);
         std::vector<uint8_t> map(512u * 512u);
         std::vector<uint64_t> xterm_scratch(512u);
         constexpr int map_repeats = 20;

@@ -56,12 +56,15 @@ add_library(slimeseeker ${SS_LIBRARY_TYPE}
   src/engine/search.cpp
   src/api/c_api.cpp
   src/backends/scalar.cpp
-  src/backends/dispatch.cpp)
+  src/backends/dispatch.cpp
+  src/backends/search_dispatch.cpp)
 if(SS_CUDA_ENABLED)
   target_sources(slimeseeker PRIVATE src/backends/cuda.cu)
   target_compile_definitions(slimeseeker PRIVATE SS_HAS_CUDA=1)
   target_compile_features(slimeseeker PRIVATE cuda_std_17)
   set_target_properties(slimeseeker PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+else()
+  target_sources(slimeseeker PRIVATE src/backends/cuda_stub.cpp)
 endif()
 add_library(SlimeSeeker::slimeseeker ALIAS slimeseeker)
 ss_enable_ipo(slimeseeker)
