@@ -12,7 +12,7 @@
 
 extern "C" {
 
-const char *ss_version(void) { return "1.0.0"; }
+const char *ss_version(void) { return "1.1.0"; }
 
 const char *ss_status_string(ss_status status) {
     switch (status) {
