@@ -33,7 +33,10 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DSLIMESEEKER_ENABLE_CUDA=OFF
+          -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
@@ -75,6 +78,7 @@ jobs:
           -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64
           -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
           -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+          -DSLIMESEEKER_ENABLE_CUDA=OFF
           -DSLIMESEEKER_BUILD_TESTS=OFF
           -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
       - name: Build

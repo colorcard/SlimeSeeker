@@ -1,4 +1,4 @@
-# 跨平台持续集成入口：原生测试、arm64 交叉编译和 Sanitizer 验证。
+# 跨平台持续集成入口：原生测试、arm64 交叉编译、Sanitizer 与 CUDA 编译验证。
 name: ci
 
 on:
@@ -15,7 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DSLIMESEEKER_ENABLE_CUDA=OFF
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
@@ -41,6 +43,7 @@ jobs:
           -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64
           -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
           -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+          -DSLIMESEEKER_ENABLE_CUDA=OFF
           -DSLIMESEEKER_BUILD_TESTS=OFF
       - name: Build
         run: cmake --build build-arm64 --parallel
@@ -62,8 +65,33 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DSLIMESEEKER_ENABLE_CUDA=OFF
           -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
       - name: Build
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  cuda-compile:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:13.0.1-devel-ubuntu24.04
+    steps:
+      - name: Install build tools
+        run: apt-get update && apt-get install -y --no-install-recommends cmake g++ git ninja-build
+      - uses: actions/checkout@v4
+      - name: Configure CUDA backend
+        run: >-
+          cmake -S . -B build-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CUDA_ARCHITECTURES=75
+          -DSLIMESEEKER_ENABLE_CUDA=ON
+          -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
+      - name: Verify CUDA source selection
+        shell: bash
+        run: |
+          grep -q 'src/backends/cuda.cu' build-cuda/build.ninja
+          ! grep -q 'src/backends/cuda_stub.cpp' build-cuda/build.ninja
+      - name: Build CUDA backend
+        run: cmake --build build-cuda --parallel
+      - name: Test without GPU device
+        run: ctest --test-dir build-cuda --output-on-failure
