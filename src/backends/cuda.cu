@@ -16,6 +16,13 @@
 #include <mutex>
 #include <new>
 
+#if __has_include(<nvtx3/nvToolsExt.h>)
+#include <nvtx3/nvToolsExt.h>
+#define SS_HAS_NVTX3 1
+#else
+#define SS_HAS_NVTX3 0
+#endif
+
 namespace ss {
 namespace {
 
@@ -26,6 +33,21 @@ constexpr size_t kPrefixElements = static_cast<size_t>(kTileMap) * (kTileMap + 1
 constexpr size_t kMaxResults = static_cast<size_t>(kTileCenters) * kTileCenters;
 
 static_assert(sizeof(ss_result) == 12);
+
+struct NvtxRange {
+    explicit NvtxRange(const char *name) {
+#if SS_HAS_NVTX3
+        nvtxRangePushA(name);
+#else
+        (void)name;
+#endif
+    }
+    ~NvtxRange() {
+#if SS_HAS_NVTX3
+        nvtxRangePop();
+#endif
+    }
+};
 
 struct TileDescriptor {
     int32_t bx;
@@ -238,6 +260,7 @@ public:
         leased_ = true;
         if (!workspace_) {
             lock.unlock();
+            NvtxRange range{"slimeseeker.cuda.initialize"};
             std::unique_ptr<CudaWorkspace> candidate{
                 new (std::nothrow) CudaWorkspace()};
             if (!candidate) {
@@ -324,6 +347,7 @@ void fill_descriptor(TileDescriptor &descriptor, const ss_search_params_v1 &para
 
 ss_status submit_batch(PipelineSlot &slot, const ss_search_params_v1 &params,
                        uint64_t tiles_x, uint64_t tile_count, uint64_t &next_tile) {
+    NvtxRange range{"slimeseeker.cuda.submit"};
     slot.tile_count = static_cast<int>(
         std::min<uint64_t>(kTilesPerBatch, tile_count - next_tile));
     for (int tile = 0; tile < slot.tile_count; ++tile)
@@ -363,35 +387,43 @@ ss_status submit_batch(PipelineSlot &slot, const ss_search_params_v1 &params,
 ss_status drain_batch(PipelineSlot &slot, const ss_search_options_v1 &options,
                       const ss_callbacks_v1 &callbacks, uint64_t total,
                       uint64_t &completed) {
-    cudaError_t error = cudaEventSynchronize(slot.counts_ready);
-    if (error != cudaSuccess) return status_from_cuda(error);
+    cudaError_t error;
+    {
+        NvtxRange range{"slimeseeker.cuda.wait_counts"};
+        error = cudaEventSynchronize(slot.counts_ready);
+        if (error != cudaSuccess) return status_from_cuda(error);
+    }
 
     bool has_results = false;
-    for (int tile = 0; tile < slot.tile_count; ++tile) {
-        const auto &descriptor = slot.host_descriptors[tile];
-        const unsigned candidates =
-            static_cast<unsigned>(descriptor.cx * descriptor.cz);
-        if (slot.host_counts[tile] > candidates || slot.host_counts[tile] > kMaxResults)
-            return SS_INTERNAL_ERROR;
-        if (callbacks.on_results && slot.host_counts[tile] != 0) {
-            has_results = true;
-            error = cudaMemcpyAsync(
-                slot.host_results + static_cast<size_t>(tile) * kMaxResults,
-                slot.device_results + static_cast<size_t>(tile) * kMaxResults,
-                static_cast<size_t>(slot.host_counts[tile]) * sizeof(ss_result),
-                cudaMemcpyDeviceToHost, slot.stream);
+    {
+        NvtxRange range{"slimeseeker.cuda.d2h_results"};
+        for (int tile = 0; tile < slot.tile_count; ++tile) {
+            const auto &descriptor = slot.host_descriptors[tile];
+            const unsigned candidates =
+                static_cast<unsigned>(descriptor.cx * descriptor.cz);
+            if (slot.host_counts[tile] > candidates || slot.host_counts[tile] > kMaxResults)
+                return SS_INTERNAL_ERROR;
+            if (callbacks.on_results && slot.host_counts[tile] != 0) {
+                has_results = true;
+                error = cudaMemcpyAsync(
+                    slot.host_results + static_cast<size_t>(tile) * kMaxResults,
+                    slot.device_results + static_cast<size_t>(tile) * kMaxResults,
+                    static_cast<size_t>(slot.host_counts[tile]) * sizeof(ss_result),
+                    cudaMemcpyDeviceToHost, slot.stream);
+                if (error != cudaSuccess) return status_from_cuda(error);
+            }
+        }
+        if (has_results) {
+            error = cudaEventRecord(slot.results_ready, slot.stream);
+            if (error != cudaSuccess) return status_from_cuda(error);
+            error = cudaEventSynchronize(slot.results_ready);
             if (error != cudaSuccess) return status_from_cuda(error);
         }
-    }
-    if (has_results) {
-        error = cudaEventRecord(slot.results_ready, slot.stream);
-        if (error != cudaSuccess) return status_from_cuda(error);
-        error = cudaEventSynchronize(slot.results_ready);
-        if (error != cudaSuccess) return status_from_cuda(error);
     }
 
     const size_t capacity = options.result_batch_capacity
         ? options.result_batch_capacity : 1024;
+    NvtxRange callback_range{"slimeseeker.cuda.callback"};
     for (int tile = 0; tile < slot.tile_count; ++tile) {
         if (cancelled(callbacks)) return SS_CANCELLED;
         const auto *results =
@@ -432,6 +464,7 @@ bool cuda_available() {
 ss_status search_cuda(const ss_search_params_v1 &params,
                       const ss_search_options_v1 &options,
                       const ss_callbacks_v1 &callbacks) {
+    NvtxRange search_range{"slimeseeker.cuda.search"};
     if (!cuda_available()) return SS_BACKEND_UNAVAILABLE;
     if (cuda_search_active) return SS_INTERNAL_ERROR;
     SearchActivityGuard activity;

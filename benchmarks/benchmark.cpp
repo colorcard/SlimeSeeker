@@ -62,7 +62,11 @@ int main(int argc, char **argv) {
             ss_status_string(status));
         if (status != SS_OK) return status;
     }
-    if (ss_backend_available(SS_BACKEND_CUDA)) {
+    // 不先调用 ss_backend_available(CUDA)，避免在首轮计时之前初始化 CUDA runtime。
+    // 首轮包含设备探测和 workspace 分配，次轮复用同一进程内的常驻资源。
+    bool cuda_available = true;
+    for (const char *run : {"cold", "warm"}) {
+        if (!cuda_available) break;
         Stats stats;
         ss_search_params_v1 params{sizeof(params), 0, -range, range, -range, range,
                                    static_cast<uint16_t>(threshold), 0};
@@ -71,10 +75,14 @@ int main(int argc, char **argv) {
         const auto start = std::chrono::steady_clock::now();
         const auto status = ss_search(&params, &options, &callbacks);
         const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        if (status == SS_BACKEND_UNAVAILABLE) {
+            cuda_available = false;
+            continue;
+        }
         const uint64_t side = static_cast<uint64_t>(range) * 2;
         const uint64_t candidates = side * side;
-        std::printf("{\"phase\":\"end_to_end\",\"backend_requested\":\"cuda\",\"backend_selected\":\"cuda\",\"range\":%d,\"threads\":%u,\"threshold\":%d,\"candidates\":%llu,\"hits\":%llu,\"elapsed_s\":%.6f,\"candidates_per_s\":%.3f,\"status\":\"%s\"}\n",
-                    range, threads, threshold, static_cast<unsigned long long>(candidates),
+        std::printf("{\"phase\":\"end_to_end\",\"run\":\"%s\",\"backend_requested\":\"cuda\",\"backend_selected\":\"cuda\",\"range\":%d,\"threads\":%u,\"threshold\":%d,\"candidates\":%llu,\"hits\":%llu,\"elapsed_s\":%.6f,\"candidates_per_s\":%.3f,\"status\":\"%s\"}\n",
+                    run, range, threads, threshold, static_cast<unsigned long long>(candidates),
                     static_cast<unsigned long long>(stats.hits), elapsed,
                     static_cast<double>(candidates) / elapsed, ss_status_string(status));
         if (status != SS_OK) return status;
