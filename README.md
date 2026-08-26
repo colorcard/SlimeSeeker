@@ -9,7 +9,7 @@ SlimeSeeker 是一个跨平台的 Minecraft Java Edition 史莱姆区块密度�
 - 精确复刻 Minecraft Java Edition 的区块种子运算、48 位 Java LCG 与 `Random.nextInt(10)` rejection sampling；
 - 搜索固定几何 `1 < dx² + dz² <= 64`，17×17 窗口内共包含 192 个区块；
 - 使用 tile 动态调度和 worker 独占 scratch，支持单线程与多线程运行；
-- 提供可移植 scalar 后端，以及独立编译、运行时检测的 AVX2、NEON 和可选 CUDA 后端；
+- 提供完整 CPU 与可选 CUDA 搜索后端；CPU 内部支持独立编译和运行时检测的 scalar、AVX2、NEON 位图算子；
 - 按阈值选择滑动圆环、二维 SAT 或滑动方框搜索管线；
 - 提供稳定的版本化 C ABI，回调支持批量结果、进度、取消和主动终止；
 - CLI 支持确定性全量排序、无序流式输出、Top-K 保留、CSV 和基准模式；
@@ -37,6 +37,7 @@ Unix 类平台的 CLI 通常位于 `build/slimeseeker`；Visual Studio 等多配
 | `SLIMESEEKER_BUILD_BENCHMARKS` | `ON` | 构建 `slimeseeker_bench` |
 | `SLIMESEEKER_BUILD_SHARED` | `OFF` | 构建共享库而不是静态库 |
 | `SLIMESEEKER_ENABLE_IPO` | `ON` | 工具链支持时为优化配置启用 IPO/LTO |
+| `SLIMESEEKER_ENABLE_CUDA` | `ON` | 检测到 CUDA toolkit 时构建 CUDA 搜索后端 |
 
 例如，只构建共享库与 CLI：
 
@@ -114,9 +115,9 @@ slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
 ./build/slimeseeker --benchmark --threads 1 --backend scalar 0 5000 45
 ```
 
-`auto` 会检测当前 CPU 能力，并用短时对拍和中位数校准专用后端。只有 AVX2/NEON 算子结果与 scalar 完全一致且至少快 5% 时才会自动采用；显式请求硬件不支持的后端会返回 `SS_BACKEND_UNAVAILABLE`。
+`auto` 只选择 CPU 搜索，并检测当前 CPU 能力，用短时对拍和中位数校准专用位图算子。只有 AVX2/NEON 算子结果与 scalar 完全一致且至少快 5% 时才会自动采用；显式请求硬件不支持的后端会返回 `SS_BACKEND_UNAVAILABLE`。
 
-CUDA 需要使用 `-DSLIMESEEKER_ENABLE_CUDA=ON`（默认会在检测到 CUDA toolkit 时启用）。`auto` 保守地不会自动初始化 GPU；显式使用 `--backend cuda` 时，CUDA 后端在 GPU 上生成 tile 位图并执行 17×17 圆环计数。没有可用 CUDA 设备时返回 `SS_BACKEND_UNAVAILABLE`。
+CUDA 需要使用 `-DSLIMESEEKER_ENABLE_CUDA=ON`（默认会在检测到 CUDA toolkit 时启用）。`auto` 不探测或初始化 GPU；显式使用 `--backend cuda` 时，CUDA 后端独立管理设备内存、tile 位图、17×17 圆环计数和结果回传。没有可用 CUDA 设备或 runtime 无法初始化时返回 `SS_BACKEND_UNAVAILABLE`。
 
 ## C ABI 集成
 
@@ -197,7 +198,9 @@ tile 内的 chunk seed 公式拆成只依赖 `x` 的 `xterm` 和只依赖世界�
 
 每个 worker 独占 map、SAT、列和及代数项 scratch，并通过原子索引动态领取 tile，避免热路径共享锁和静态分片尾部失衡。命中结果先进入 worker 局部批次，再通过有界队列交给调用线程；队列满时产生自然背压，内存不会随生产者速度无限增长。
 
-scalar 是所有平台的正确性基线。AVX2 与 NEON 位于独立后端，运行时能力检查保证不在不支持的 CPU 上执行专用指令。更详细的目录依赖、数据流和优化分析见[架构文档](docs/architecture.md)与[性能热点分析](docs/performance-hotspots.md)。
+完整搜索首先在 CPU 与 CUDA 描述符之间分派。CPU 搜索拥有 tile、worker、SAT 和有界结果队列，再在内部选择 scalar、AVX2 或 NEON 位图算子；CUDA 搜索拥有自己的融合 kernel、设备缓冲与结果回传，不模拟同步 CPU 位图接口。scalar 始终是所有实现的正确性基线。
+
+所有完整搜索后端共享同一契约：回调由调用 `ss_search()` 的线程串行触发；取消、回调终止和不可用状态彼此独立；结果不能静默截断。未来 Metal/Vulkan 后端也必须在这一层接入，而不是向 CPU 搜索主体增加特殊分支。更详细的目录依赖、数据流和优化分析见[架构文档](docs/architecture.md)与[性能热点分析](docs/performance-hotspots.md)。
 
 ## Benchmark
 
@@ -251,7 +254,7 @@ ctest --preset asan
 - [ ] 研究跨 tile 边缘复用，减少相邻搜索块之间的重复史莱姆判定；
 - [ ] 扩充 Windows、Linux、macOS 以及 x86-64、arm64 的持续集成与性能回归覆盖；
 - [ ] 提供更易集成的发布产物、安装说明和更多语言绑定示例；
-- [ ] 评估 Metal、Vulkan 或 CUDA 等可选 GPU 后端，并保持与 CPU 搜索相同的精确结果语义。
+- [ ] 评估 Metal、Vulkan 等可选 GPU 搜索后端，并保持与 CPU/CUDA 相同的精确结果语义。
 
 ## 致谢
 
