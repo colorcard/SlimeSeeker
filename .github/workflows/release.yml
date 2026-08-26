@@ -93,3 +93,66 @@ jobs:
           gh release upload "${{ inputs.tag }}" "$package.tar.gz" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+
+  linux-cuda:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:13.0.1-devel-ubuntu24.04
+    steps:
+      - name: Install build tools
+        run: apt-get update && apt-get install -y --no-install-recommends cmake g++ git ninja-build
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Configure CUDA release package
+        run: >-
+          cmake -S . -B build-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DSLIMESEEKER_CUDA_ARCHITECTURES=release
+          -DSLIMESEEKER_ENABLE_CUDA=ON
+          -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build-cuda --parallel
+      - name: Test without GPU device
+        run: ctest --test-dir build-cuda --output-on-failure
+      - name: Verify CUDA code objects and static runtime
+        shell: bash
+        run: |
+          cuobjdump --list-elf build-cuda/slimeseeker | tee cuda-elf.txt
+          for arch in 75 80 86 89 90 100 120; do
+            grep -Eq "sm_${arch}.*cubin" cuda-elf.txt
+          done
+          cuobjdump --dump-ptx build-cuda/slimeseeker | tee cuda-ptx.txt
+          grep -q 'Fatbin ptx code' cuda-ptx.txt
+          grep -Eq 'arch = sm_120|\.target sm_120' cuda-ptx.txt
+          ! ldd build-cuda/slimeseeker | grep -q 'libcudart'
+      - name: Package CUDA release
+        shell: bash
+        run: |
+          version="${{ inputs.tag }}"
+          package="slimeseeker-${version#v}-linux-x86_64-cuda13"
+          cmake --install build-cuda --prefix "$package"
+          mkdir -p dist
+          tar -czf "dist/$package.tar.gz" "$package"
+      - name: Upload CUDA package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slimeseeker-linux-x86_64-cuda13
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish-cuda:
+    needs: linux-cuda
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Download CUDA package
+        uses: actions/download-artifact@v4
+        with:
+          name: slimeseeker-linux-x86_64-cuda13
+          path: dist
+      - name: Upload CUDA package to release
+        run: gh release upload "${{ inputs.tag }}" dist/*.tar.gz --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

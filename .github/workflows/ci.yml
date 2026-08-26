@@ -95,3 +95,23 @@ jobs:
         run: cmake --build build-cuda --parallel
       - name: Test without GPU device
         run: ctest --test-dir build-cuda --output-on-failure
+      - name: Configure CUDA release fat binary
+        run: >-
+          cmake -S . -B build-cuda-fat -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DSLIMESEEKER_CUDA_ARCHITECTURES=release
+          -DSLIMESEEKER_ENABLE_CUDA=ON
+          -DSLIMESEEKER_BUILD_TESTS=OFF
+          -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
+      - name: Build CUDA release CLI
+        run: cmake --build build-cuda-fat --target slimeseeker_cli --parallel
+      - name: Verify CUDA release code objects
+        shell: bash
+        run: |
+          cuobjdump --list-elf build-cuda-fat/slimeseeker | tee cuda-elf.txt
+          for arch in 75 80 86 89 90 100 120; do
+            grep -Eq "sm_${arch}.*cubin" cuda-elf.txt
+          done
+          cuobjdump --dump-ptx build-cuda-fat/slimeseeker | tee cuda-ptx.txt
+          grep -q 'Fatbin ptx code' cuda-ptx.txt
+          grep -Eq 'arch = sm_120|\.target sm_120' cuda-ptx.txt
+          ! ldd build-cuda-fat/slimeseeker | grep -q 'libcudart'
