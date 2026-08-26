@@ -7,6 +7,9 @@ option(SLIMESEEKER_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(SLIMESEEKER_BUILD_SHARED "Build shared library" OFF)
 option(SLIMESEEKER_ENABLE_IPO "Enable IPO/LTO for optimized configurations" ON)
 option(SLIMESEEKER_ENABLE_CUDA "Build CUDA backend when a CUDA toolkit is available" ON)
+set(SLIMESEEKER_CUDA_ARCHITECTURES "toolchain" CACHE STRING
+  "CUDA targets: toolchain, native, release, or a CMake CUDA architecture list")
+set_property(CACHE SLIMESEEKER_CUDA_ARCHITECTURES PROPERTY STRINGS toolchain native release)
 
 include(CheckLanguage)
 set(SS_CUDA_ENABLED OFF)
@@ -17,6 +20,33 @@ if(SLIMESEEKER_ENABLE_CUDA)
     set(SS_CUDA_ENABLED ON)
   else()
     message(STATUS "CUDA compiler not found; CUDA backend disabled")
+  endif()
+endif()
+
+set(SS_CUDA_ARCHITECTURES "")
+if(SS_CUDA_ENABLED)
+  if(SLIMESEEKER_CUDA_ARCHITECTURES STREQUAL "toolchain")
+    message(STATUS "CUDA architectures: toolchain default (${CMAKE_CUDA_ARCHITECTURES})")
+  elseif(SLIMESEEKER_CUDA_ARCHITECTURES STREQUAL "native")
+    set(SS_CUDA_ARCHITECTURES native)
+    message(STATUS "CUDA architectures: native GPU")
+  elseif(SLIMESEEKER_CUDA_ARCHITECTURES STREQUAL "release")
+    if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
+      message(FATAL_ERROR
+        "SLIMESEEKER_CUDA_ARCHITECTURES=release requires CUDA 13.0 or newer")
+    endif()
+    # 发布包携带各代真实 SASS，并保留最高架构 PTX 供后续兼容设备由驱动 JIT。
+    set(SS_CUDA_ARCHITECTURES
+      75-real 80-real 86-real 89-real 90-real 100-real 120-real 120-virtual)
+    message(STATUS "CUDA architectures: release fat binary (${SS_CUDA_ARCHITECTURES})")
+  else()
+    set(SS_CUDA_ARCHITECTURES "${SLIMESEEKER_CUDA_ARCHITECTURES}")
+    message(STATUS "CUDA architectures: explicit (${SS_CUDA_ARCHITECTURES})")
+  endif()
+  if(SS_CUDA_ARCHITECTURES)
+    # 静态库和最终可执行文件都会执行 CUDA device-link；两层必须使用同一架构集合，
+    # 否则最终链接可能按工具链默认值裁掉库中已经生成的其他 code object。
+    set(CMAKE_CUDA_ARCHITECTURES "${SS_CUDA_ARCHITECTURES}")
   endif()
 endif()
 
@@ -62,7 +92,12 @@ if(SS_CUDA_ENABLED)
   target_sources(slimeseeker PRIVATE src/backends/cuda.cu)
   target_compile_definitions(slimeseeker PRIVATE SS_HAS_CUDA=1)
   target_compile_features(slimeseeker PRIVATE cuda_std_17)
-  set_target_properties(slimeseeker PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+  set_target_properties(slimeseeker PROPERTIES
+    CUDA_RUNTIME_LIBRARY Static)
+  if(SS_CUDA_ARCHITECTURES)
+    set_target_properties(slimeseeker PROPERTIES
+      CUDA_ARCHITECTURES "${SS_CUDA_ARCHITECTURES}")
+  endif()
 else()
   target_sources(slimeseeker PRIVATE src/backends/cuda_stub.cpp)
 endif()
