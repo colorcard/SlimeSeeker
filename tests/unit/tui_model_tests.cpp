@@ -25,6 +25,11 @@ std::filesystem::path unique_path(const char *name) {
             std::chrono::steady_clock::now().time_since_epoch().count()) + ".csv");
 }
 
+std::string read_file(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    return {(std::istreambuf_iterator<char>(input)), {}};
+}
+
 void test_translations_and_locale() {
     for (size_t i = 0; i < static_cast<size_t>(TextKey::count_); ++i) {
         const auto key = static_cast<TextKey>(i);
@@ -105,16 +110,12 @@ void test_export() {
     std::atomic<uint64_t> completed{0};
     CHECK(export_csv_file(path, results, false, nullptr, &completed) == ExportStatus::success);
     CHECK(completed.load() == results.size());
-    std::ifstream input(path, std::ios::binary);
-    const std::string content((std::istreambuf_iterator<char>(input)), {});
-    CHECK(content == "x,z,count\n1,-2,45\n3,4,44\n");
+    CHECK(read_file(path) == "x,z,count\n1,-2,45\n3,4,44\n");
     CHECK(export_csv_file(path, results, false) == ExportStatus::exists);
 
     const std::vector<ss_result> replacement{{9, 8, 47, 0}};
     CHECK(export_csv_file(path, replacement, true) == ExportStatus::success);
-    std::ifstream replaced(path, std::ios::binary);
-    const std::string replaced_content((std::istreambuf_iterator<char>(replaced)), {});
-    CHECK(replaced_content == "x,z,count\n9,8,47\n");
+    CHECK(read_file(path) == "x,z,count\n9,8,47\n");
 
     std::atomic<bool> cancel{true};
     const auto cancelled_path = unique_path("cancelled");
