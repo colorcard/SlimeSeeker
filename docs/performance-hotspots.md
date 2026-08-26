@@ -6,11 +6,14 @@
 
 ## 结论摘要
 
-下一步应优先重构 **CUDA 资源生命周期与多 tile 异步流水线**，而不是继续微调 CUDA
-kernel。高阈值 4 亿候选的两个 kernel 合计只占约 18.14 ms，但当前实现对 1681 个 tile
-逐个执行、逐个 `cudaDeviceSynchronize()`，且每次搜索都初始化 runtime、申请设备与锁页
-内存。冷启动和主机编排已经淹没 kernel 算力，原生 `sm_120` 带来的 kernel 加速也只能转化
-为约 0--3% 的端到端收益。
+热点追踪首先确定了 **CUDA 资源生命周期与多 tile 异步流水线** 为 P0，而不是 CUDA
+kernel 微调。该阶段现已完成：四个 tile 合并为一个二维 grid 批次，两个 stream slot
+形成双缓冲，约 47 MiB 的单 workspace 在进程内有界复用。高阈值 4 亿候选从 3362 次
+kernel launch 降至 842 次，稳态路径不再调用 `cudaDeviceSynchronize()`。
+
+P0 后本机 CUDA 暖搜索达到约 25.3 G candidates/s；冷搜索仍受驱动和 runtime 初始化
+限制，但五轮中位数也从约 2.62 G/s 提升至约 3.10 G/s。下一阶段主线转为 P1：低阈值
+CPU 批量计数和有界结果交付。
 
 CPU 优化必须按阈值分开处理：
 
@@ -22,7 +25,7 @@ CPU 优化必须按阈值分开处理：
 
 优先级因此确定为：
 
-1. **P0：CUDA 常驻资源、多 tile 批处理和异步回传；**
+1. **P0（已完成）：CUDA 常驻资源、多 tile 批处理和异步回传；**
 2. **P1：低阈值 CPU 批量计数与结果交付；**
 3. **P2：中阈值 SAT/圆环查询的数据布局与向量化；**
 4. **P3：高阈值完整 CPU SIMD 和 CUDA kernel 内部优化。**
@@ -134,9 +137,9 @@ worker 很快填满深度为 2 的有界队列，并在条件变量上等待调�
 
 ## CUDA 热点
 
-### 高阈值：GPU 计算很短，主机逐 tile 串行
+### P0 前高阈值基线：GPU 计算很短，主机逐 tile 串行
 
-阈值 45、4 亿候选共切分为 1681 个 tile。当前每 tile 启动两个 kernel，并在读取结果前执行
+阈值 45、4 亿候选共切分为 1681 个 tile。P0 前每 tile 启动两个 kernel，并在读取结果前执行
 一次 `cudaDeviceSynchronize()`，合计 3362 次 kernel launch 和 1681 次设备级同步。
 
 Nsight Systems 汇总如下：
@@ -151,14 +154,13 @@ Nsight Systems 汇总如下：
 | kernel launch API | 约 6.76 ms | 3362 次 |
 | `cudaMemset` API | 约 2.09 ms | 每 tile 清零计数 |
 
-当前 `search_cuda()` 还会在每次调用中执行设备探测、`cudaSetDevice()`、三次 `cudaMalloc()`、
+P0 前 `search_cuda()` 还会在每次调用中执行设备探测、`cudaSetDevice()`、三次 `cudaMalloc()`、
 一次 `cudaMallocHost()`、常量上传和对应释放。小范围搜索也需要约 0.11--0.19 秒；候选数从
 3600 万增加到 4 亿时，部分运行只增加约 29 ms。这是固定初始化和串行编排主导的典型特征。
 
-代码落点是 `src/backends/cuda.cu` 的 tile 双循环。第一优先级应消除循环内部的设备级同步，
-让多个 tile 和主机回传形成流水，而不是先优化仅有约 18 ms 的 kernel。
+这些数据是 P0 的决策基线，保留用于判断流水线改造是否解决了正确层级的问题。
 
-### 低阈值：结果传输和主机重打包超过 kernel
+### P0 前低阈值基线：结果传输和主机重打包超过 kernel
 
 阈值 20、3600 万候选共 169 个 tile，产生 `16,461,623` 条结果：
 
@@ -189,21 +191,39 @@ Nsight Systems 汇总如下：
 
 ## 下一阶段实施路线
 
-### P0：CUDA 生命周期与多 tile 异步流水线
+### P0：CUDA 生命周期与多 tile 异步流水线（已完成）
 
-1. 缓存已初始化的 device/context、圆环常量、设备缓冲和锁页主机缓冲，避免每次搜索重复
-   初始化和分配；使用受控资源池或每调用 slot 保证并发 `ss_search()` 的线程安全。
-2. 一次提交多个 tile，移除 tile 内的 `cudaDeviceSynchronize()`；用 stream 和 event 表达
-   build、count、D2H 与复用依赖。
-3. 至少采用双缓冲：GPU 计算下一批 tile 时，上一批 count/results 异步回传并由调用线程
-   消费。不要让默认 CPU `auto` 为此初始化 CUDA。
-4. 结果容量按批次严格证明。密集结果超过当前缓冲预算时必须拆批、扩容或返回明确错误，
-   不能 clamp 后成功返回；设备与主机内存都必须保持有界。
-5. 基准增加 CUDA cold、warm、kernel、D2H、主机回调五类时间，并用 NVTX 标注初始化、
-   提交、等待、回传和消费阶段。
+实现采用每批 4 tile、2 个独立 stream slot 和单一进程级 workspace。每个 slot 独占
+descriptor、prefix、result count、device result 与 pinned host result 缓冲；并发 CUDA
+搜索通过租约串行获取 workspace，因此资源上限不随调用线程数增长。等待租约期间仍轮询
+取消，回调、进度和取消函数继续只在各自调用线程发生。
 
-这一阶段的验收指标不是某个 kernel 快多少，而是暖搜索中固定初始化接近消失、同步次数从
-每 tile 一次降到每批/event 一次，并且大范围高阈值端到端吞吐显著高于当前基线。
+每批只启动一次位图/行前缀 kernel 和一次圆环计数 kernel。调用线程等待前一 slot 的
+count event 并按实际数量异步回传结果时，另一 slot 可继续执行。结果直接从 pinned buffer
+按 `result_batch_capacity` 切片回调，不再逐条过滤和重打包。设备 count 必须不超过对应
+tile 候选数，否则以内部错误失败；没有任何 clamp 或静默截断。
+
+阈值 45、4 亿候选的 P0 后 Nsight Systems 结果：
+
+| 指标 | P0 前 | P0 后 |
+|---|---:|---:|
+| tile / batch | 1681 / 1681 | 1681 / 421 |
+| kernel launch | 3362 | 842 |
+| kernel 总时间 | 约 18.14 ms | 约 17.66 ms |
+| launch API 时间 | 约 6.76 ms | 约 1.72 ms |
+| 设备级同步 | 1681 次 | 0 次 |
+| event 等待 | 0 次 | 429 次，约 11.58 ms |
+
+Release + IPO、显式 CUDA、seed `0` 的五轮中位数：
+
+| 场景 | P0 前单次 CLI | P0 后 cold | P0 后 warm |
+|---|---:|---:|---:|
+| threshold 45，4亿候选 | 约 2.62 G/s | 约 3.10 G/s | 约 25.3 G/s |
+| threshold 20，3600万候选 | 约 0.251 G/s | 约 0.280 G/s | 约 4.82 G/s |
+
+warm 表示同一进程第二次搜索，复用 context、常量和约 47 MiB workspace；cold 包含首次设备
+探测和资源分配。两种口径必须继续分开报告。NVTX 已标记初始化、提交、count 等待、D2H
+与 callback 阶段，可用于后续复测。
 
 ### P1：低阈值 CPU 与有界结果交付
 
@@ -258,6 +278,6 @@ Nsight Systems 汇总如下：
 7. 验证 host/device 内存有明确上限，生产者快于消费者时仍有正确背压；
 8. CI 不加入跨机器绝对耗时断言，只检查正确性、构建目标和可选后端契约。
 
-完成 P0 后必须重新采样 CUDA 时间线，再决定 P3 中 kernel 优化的先后；完成 P1 后也应重新
-测量低阈值的 `futex` 数与 8 到 16 线程扩展。优化路线以新的端到端证据迭代，不把本次热点
-比例固化为长期架构假设。
+P0 复测表明 kernel 仍不是下一优先级。完成 P1 后应重新测量低阈值的 `futex` 数与 8 到
+16 线程扩展；只有 CUDA kernel 在暖搜索中形成显著占比后才进入 P3。优化路线以新的端到端
+证据迭代，不把本次热点比例固化为长期架构假设。

@@ -1,7 +1,7 @@
 # SlimeSeeker 架构
 
-> 当前 CPU 热点、线程扩展和优化优先级记录在
-> [性能热点分析基线](performance-hotspots.md) 中。
+> 当前 CPU/CUDA 热点、线程扩展和优化优先级记录在
+> [性能热点与优化路线](performance-hotspots.md) 中。
 
 ## 目录职责
 
@@ -33,7 +33,7 @@ C++20 用于内部实现，因为它同时提供定宽无符号回绕、RAII、�
 1. 领域核心定义区块种子、Java 48 位 LCG、精确 `nextInt(10)`、环形几何和规范结果顺序。该层不依赖线程、CLI 或平台 API。
 2. 完整搜索分派层选择 CPU 或 CUDA 描述符。每个描述符统一提供可用性查询和完整搜索入口，但拥有自己的执行与资源生命周期。
 3. CPU 搜索把候选区域切成最多 496×496 个中心的 tile。每个 worker 独占位图和 SAT scratch，通过原子索引动态领取任务；CPU 内部位图算子可由 scalar、AVX2 或 NEON 替换。
-4. CPU 的有界批次队列将 worker 与调用线程隔离；CUDA 则在每个 tile 完成后把设备结果分批交给调用线程。两者都只从调用线程触发结果、进度和取消回调。
+4. CPU 的有界批次队列将 worker 与调用线程隔离；CUDA 以四个 tile 为一批并用双 stream slot 重叠计算与回传。两者都只从调用线程触发结果、进度和取消回调。
 5. C ABI 负责输入尺寸和坐标验证、状态码与异常隔离。CLI 只实现参数、信号、结果保留策略和显示。
 
 ## 数据流
@@ -45,7 +45,7 @@ C++20 用于内部实现，因为它同时提供定宽无符号回绕、RAII、�
         ├─ CPU 搜索 → 动态 tile/worker → scalar/AVX2/NEON 位图算子
         │                              → 滑动圆环/SAT/滑动方框
         │                              → 有界结果队列
-        └─ CUDA 搜索 → GPU tile 位图与前缀和 → 圆环 kernel → 设备结果回传
+        └─ CUDA 搜索 → 4 tile批量位图与前缀和 → 圆环 kernel → 双缓冲异步回传
         ↓
 调用线程串行 C 回调 → CLI 流式/全量排序/Top-K
 ```
@@ -63,6 +63,12 @@ SAT 复用时仅清零首行和每行首列，其余单元都会在融合构建�
 - `BuildMapFn` 只表示 CPU 内部的同步位图算子。scalar、AVX2 和 NEON 输入输出一致，由 `search_cpu_impl()` 选择；GPU 不需要通过主机指针返回中间位图。
 
 CPU 描述符拥有 tile 划分、worker、SAT scratch、有界结果队列、进度和取消。CUDA 描述符拥有设备选择、设备内存、融合 kernel、结果压缩与主机回传。新增 Metal 或 Vulkan 时应注册新的完整搜索描述符，不得在 CPU 搜索主体内增加后端条件分支，也不得为了复用 `BuildMapFn` 引入不必要的设备到主机位图拷贝。
+
+CUDA 使用一个进程级惰性 workspace，固定包含两个 stream slot，每个 slot 最多容纳四个
+tile。device、event 和 pinned host 缓冲在搜索之间复用，总量约 47 MiB；多个调用线程通过
+租约串行使用该 workspace，等待期间仍可取消。每批的 count 先异步回传并验证容量，再把
+实际结果直接从 pinned buffer 切片交给调用线程。CUDA 结果回调中不允许同线程重入 CUDA
+搜索，嵌套调用会返回 `SS_INTERNAL_ERROR`，避免单 workspace 等待自身形成死锁。
 
 `available()` 只判断实现是否编译、当前设备是否存在以及 runtime 是否可初始化。无 CUDA 构建提供同签名 stub，因此 engine 不包含 `SS_HAS_CUDA` 条件编译。显式选择不可用后端返回 `SS_BACKEND_UNAVAILABLE`。
 

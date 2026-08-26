@@ -117,7 +117,7 @@ slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
 
 `auto` 只选择 CPU 搜索，并检测当前 CPU 能力，用短时对拍和中位数校准专用位图算子。只有 AVX2/NEON 算子结果与 scalar 完全一致且至少快 5% 时才会自动采用；显式请求硬件不支持的后端会返回 `SS_BACKEND_UNAVAILABLE`。
 
-CUDA 需要使用 `-DSLIMESEEKER_ENABLE_CUDA=ON`（默认会在检测到 CUDA toolkit 时启用）。`auto` 不探测或初始化 GPU；显式使用 `--backend cuda` 时，CUDA 后端独立管理设备内存、tile 位图、17×17 圆环计数和结果回传。没有可用 CUDA 设备或 runtime 无法初始化时返回 `SS_BACKEND_UNAVAILABLE`。
+CUDA 需要使用 `-DSLIMESEEKER_ENABLE_CUDA=ON`（默认会在检测到 CUDA toolkit 时启用）。`auto` 不探测或初始化 GPU；显式使用 `--backend cuda` 时，CUDA 后端以四个 tile 为一批并用双 stream slot 重叠位图、17×17 圆环计数和结果回传。约 47 MiB 的单一 workspace 在进程内复用，并发 CUDA 搜索会有界排队；等待期间仍可取消。没有可用 CUDA 设备或 runtime 无法初始化时返回 `SS_BACKEND_UNAVAILABLE`。同一结果回调中不能重入 CUDA 搜索，嵌套调用返回 `SS_INTERNAL_ERROR`。
 
 ## C ABI 集成
 
@@ -210,7 +210,7 @@ tile 内的 chunk seed 公式拆成只依赖 `x` 的 `xterm` 和只依赖世界�
 ./build/slimeseeker_bench 5000 1 45
 ```
 
-参数依次为 `[range] [threads] [threshold]`，每行输出一条 JSON，包含请求/实际后端、候选数、命中数、耗时和吞吐。建议在相同机器、编译器、构建配置与输入上交替运行多次并比较中位数，不要在普通 CI 中设置易受温度、频率和调度影响的绝对性能门槛。
+参数依次为 `[range] [threads] [threshold]`，每行输出一条 JSON，包含请求/实际后端、候选数、命中数、耗时和吞吐。CUDA 会连续输出 `cold` 与 `warm`：前者包含首次设备探测和 workspace 分配，后者复用同一进程资源。建议在相同机器、编译器、构建配置与输入上交替运行多次并比较中位数，不要混合冷暖口径，也不要在普通 CI 中设置易受温度、频率和调度影响的绝对性能门槛。
 
 以下为 Apple M1 Max（10 核、32 GiB）、macOS arm64、AppleClang 17、Release + IPO/LTO、scalar、seed `0` 的代表值：
 

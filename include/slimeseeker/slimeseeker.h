@@ -72,7 +72,8 @@ typedef struct ss_result {
 } ss_result;
 
 /* on_results 返回非零会以 SS_CALLBACK_ABORTED 终止。
- * 三类回调均由调用 ss_search 的线程串行触发，无需调用方额外加锁。 */
+ * 三类回调均由调用 ss_search 的线程串行触发，无需调用方额外加锁。
+ * CUDA 的结果回调不得在同一线程重入 CUDA 搜索；嵌套调用返回 SS_INTERNAL_ERROR。 */
 typedef int (*ss_results_fn)(void *context, const ss_result *results, size_t count);
 typedef void (*ss_progress_fn)(void *context, uint64_t completed, uint64_t total);
 typedef int (*ss_cancel_fn)(void *context);
