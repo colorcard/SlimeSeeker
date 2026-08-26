@@ -4,8 +4,8 @@
  * CPU 搜索与 CUDA 搜索通过同一描述符契约注册；auto/scalar/AVX2/NEON 都选择 CPU
  * 搜索生命周期，具体 CPU 位图算子仍由 CPU 实现内部校准和选择。
  */
-#include "backends/backend.hpp"
 #include "engine/search.hpp"
+#include "backends/backend.hpp"
 
 namespace ss {
 namespace {

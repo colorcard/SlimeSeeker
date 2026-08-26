@@ -54,10 +54,10 @@ endif()
 add_library(slimeseeker ${SS_LIBRARY_TYPE}
   src/core/domain.cpp
   src/engine/search.cpp
+  src/engine/search_dispatch.cpp
   src/api/c_api.cpp
   src/backends/scalar.cpp
-  src/backends/dispatch.cpp
-  src/backends/search_dispatch.cpp)
+  src/backends/dispatch.cpp)
 if(SS_CUDA_ENABLED)
   target_sources(slimeseeker PRIVATE src/backends/cuda.cu)
   target_compile_definitions(slimeseeker PRIVATE SS_HAS_CUDA=1)
