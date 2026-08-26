@@ -7,6 +7,9 @@ option(SLIMESEEKER_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(SLIMESEEKER_BUILD_SHARED "Build shared library" OFF)
 option(SLIMESEEKER_ENABLE_IPO "Enable IPO/LTO for optimized configurations" ON)
 option(SLIMESEEKER_ENABLE_CUDA "Build CUDA backend when a CUDA toolkit is available" ON)
+option(SLIMESEEKER_BUILD_TUI "Build the interactive terminal UI" ON)
+set(SLIMESEEKER_FTXUI_PROVIDER "fetch" CACHE STRING "FTXUI provider: fetch or system")
+set_property(CACHE SLIMESEEKER_FTXUI_PROVIDER PROPERTY STRINGS fetch system)
 set(SLIMESEEKER_CUDA_ARCHITECTURES "toolchain" CACHE STRING
   "CUDA targets: toolchain, native, release, or a CMake CUDA architecture list")
 set_property(CACHE SLIMESEEKER_CUDA_ARCHITECTURES PROPERTY STRINGS toolchain native release)
@@ -134,7 +137,30 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(slimeseeker PRIVATE Threads::Threads)
 
-add_executable(slimeseeker_cli apps/cli/main.cpp)
+add_executable(slimeseeker_cli apps/cli/main.cpp apps/cli/cli.cpp)
+target_include_directories(slimeseeker_cli PRIVATE apps/cli)
+if(SLIMESEEKER_BUILD_TUI)
+  if(SLIMESEEKER_FTXUI_PROVIDER STREQUAL "system")
+    find_package(ftxui 7.0 CONFIG REQUIRED)
+  elseif(SLIMESEEKER_FTXUI_PROVIDER STREQUAL "fetch")
+    include(FetchContent)
+    set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(ftxui
+      URL https://codeload.github.com/ArthurSonzogni/FTXUI/tar.gz/refs/tags/v7.0.3
+      URL_HASH SHA256=e7c62ffe19009759821b4f0f8df7f2a6fb83784c3a9f1477d81f56d3ee723c88
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(ftxui)
+  else()
+    message(FATAL_ERROR "SLIMESEEKER_FTXUI_PROVIDER must be fetch or system")
+  endif()
+  target_sources(slimeseeker_cli PRIVATE apps/cli/tui.cpp apps/cli/tui_model.cpp)
+  target_link_libraries(slimeseeker_cli PRIVATE ftxui::screen ftxui::dom ftxui::component)
+else()
+  target_sources(slimeseeker_cli PRIVATE apps/cli/tui_stub.cpp)
+endif()
 ss_enable_ipo(slimeseeker_cli)
 set_target_properties(slimeseeker_cli PROPERTIES OUTPUT_NAME slimeseeker)
 target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker)
@@ -155,6 +181,10 @@ write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/SlimeSeekerConfigVe
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/SlimeSeekerConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/SlimeSeekerConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SlimeSeeker)
+if(SLIMESEEKER_BUILD_TUI)
+  install(FILES licenses/FTXUI.txt
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/slimeseeker/licenses)
+endif()
 
 if(SLIMESEEKER_BUILD_TESTS)
   enable_testing()
@@ -172,6 +202,17 @@ if(SLIMESEEKER_BUILD_TESTS)
   set_target_properties(slimeseeker_c_api_smoke PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(slimeseeker_c_api_smoke PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME c_api_smoke COMMAND slimeseeker_c_api_smoke)
+  if(SLIMESEEKER_BUILD_TUI)
+    add_executable(slimeseeker_tui_model_tests
+      tests/unit/tui_model_tests.cpp apps/cli/tui_model.cpp)
+    target_include_directories(slimeseeker_tui_model_tests PRIVATE apps/cli)
+    target_link_libraries(slimeseeker_tui_model_tests PRIVATE SlimeSeeker::slimeseeker)
+    add_test(NAME tui_model_tests COMMAND slimeseeker_tui_model_tests)
+    add_test(NAME tui_requires_terminal
+      COMMAND ${CMAKE_COMMAND}
+        -DSLIMESEEKER_CLI=$<TARGET_FILE:slimeseeker_cli>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/tui_noninteractive.cmake)
+  endif()
 endif()
 
 if(SLIMESEEKER_BUILD_BENCHMARKS)
