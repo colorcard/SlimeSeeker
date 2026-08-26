@@ -11,7 +11,7 @@ kernel 微调。该阶段现已完成：四个 tile 合并为一个二维 grid �
 形成双缓冲，约 47 MiB 的单 workspace 在进程内有界复用。高阈值 4 亿候选从 3362 次
 kernel launch 降至 842 次，稳态路径不再调用 `cudaDeviceSynchronize()`。
 
-P0 后本机 CUDA 暖搜索达到约 25.3 G candidates/s；冷搜索仍受驱动和 runtime 初始化
+P0 后使用原生 `sm_120` SASS 的本机 CUDA 暖搜索达到约 29.3 G candidates/s；冷搜索仍受驱动和 runtime 初始化
 限制，但五轮中位数也从约 2.62 G/s 提升至约 3.10 G/s。下一阶段主线转为 P1：低阈值
 CPU 批量计数和有界结果交付。
 
@@ -175,7 +175,7 @@ P0 前 `search_cuda()` 还会在每次调用中执行设备探测、`cudaSetDevi
 更快的计数 kernel 消除的；设计多 tile 异步流水时，必须为密集结果保留 D2H 带宽、主机
 消费和背压预算。
 
-### 架构目标：必要的构建卫生，不是当前 P0
+### 架构目标：原生 SASS 是发布性能的一部分
 
 普通本地构建缓存曾以 `sm_75` 为目标，而 RTX 5070 Ti 原生目标是 `sm_120`。`cuobjdump`
 显示资源差异：
@@ -185,9 +185,14 @@ P0 前 `search_cuda()` 还会在每次调用中执行设备探测、`cudaSetDevi
 | 圆环计数 | 70 | 42 |
 | 位图与行前缀 | 13 | 16 |
 
-原生 `sm_120` 使圆环 kernel 约快 17.6%、kernel 总时间约快 11.4%，但端到端只改善约
-0--3%。Release 和发布构建应显式选择合理的 CUDA architecture 或提供兼容的 fat binary，
-但它不是当前首要性能工作；主机生命周期优化完成后应重新测量其实际影响。
+P0 完成后重新以 threshold 45、4 亿候选、五轮 warm 中位数测量：仅包含 `sm_75` SASS 的
+产物约为 25.23 G candidates/s，原生 `sm_120` SASS 约为 29.30 G candidates/s，端到端提升
+约 16.1%。因此架构目标不只是构建卫生，而是可观的发布性能因素。
+
+正式 CUDA 13 产物包含 `sm_75/80/86/89/90/100/120` 的真实 SASS，并保留
+`compute_120` PTX。真实 SASS 避免已知设备依赖 JIT 或回退到较老代码生成；最高架构 PTX
+为后续兼容设备保留驱动 JIT 路径。CI 必须在最终 CLI 上验证所有 code object，而不能只检查
+静态库，因为 device-link 配置不一致会裁掉库中已经生成的架构。
 
 ## 下一阶段实施路线
 
@@ -218,7 +223,7 @@ Release + IPO、显式 CUDA、seed `0` 的五轮中位数：
 
 | 场景 | P0 前单次 CLI | P0 后 cold | P0 后 warm |
 |---|---:|---:|---:|
-| threshold 45，4亿候选 | 约 2.62 G/s | 约 3.10 G/s | 约 25.3 G/s |
+| threshold 45，4亿候选 | 约 2.62 G/s | 约 3.10 G/s | 约 29.3 G/s（原生 `sm_120`） |
 | threshold 20，3600万候选 | 约 0.251 G/s | 约 0.280 G/s | 约 4.82 G/s |
 
 warm 表示同一进程第二次搜索，复用 context、常量和约 47 MiB workspace；cold 包含首次设备

@@ -72,6 +72,13 @@ tile。device、event 和 pinned host 缓冲在搜索之间复用，总量约 47
 
 `available()` 只判断实现是否编译、当前设备是否存在以及 runtime 是否可初始化。无 CUDA 构建提供同签名 stub，因此 engine 不包含 `SS_HAS_CUDA` 条件编译。显式选择不可用后端返回 `SS_BACKEND_UNAVAILABLE`。
 
+CUDA 构建区分本机优化与可分发产物。`native` 只生成当前设备的真实 SASS；正式 CUDA 13
+发行档位同时生成 `sm_75/80/86/89/90/100/120` SASS 和 `compute_120` PTX。架构列表同时设置
+到库目标与顶层 device-link，防止最终链接按工具链默认架构裁掉静态库中的其他 code object。
+当前 CUDA 设备代码集中在单一编译单元，不启用不必要的 relocatable device code；CUDA
+runtime 静态链接，因此发行包运行时只依赖兼容的 NVIDIA 驱动，不依赖目标机器安装 Toolkit。
+CI 使用 `cuobjdump` 检查所有 SASS 与 PTX，并用动态依赖检查阻止意外引入 `libcudart`。
+
 `auto` 的语义保持 CPU-only：它不会枚举或初始化 GPU，而是在 CPU 搜索内部检查 ISA 能力，并对 scalar 和专用位图算子做固定工作量校准。各 ISA 文件单独使用 `-mavx2` 或对应平台默认 arm64 NEON 编译，通用目标不使用 `-march=native`；只有专用实现的中位耗时至少低 5% 才采用它，选择结果在进程内缓存。
 
 每个完整搜索后端都必须满足相同契约：

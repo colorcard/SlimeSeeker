@@ -38,6 +38,7 @@ Unix 类平台的 CLI 通常位于 `build/slimeseeker`；Visual Studio 等多配
 | `SLIMESEEKER_BUILD_SHARED` | `OFF` | 构建共享库而不是静态库 |
 | `SLIMESEEKER_ENABLE_IPO` | `ON` | 工具链支持时为优化配置启用 IPO/LTO |
 | `SLIMESEEKER_ENABLE_CUDA` | `ON` | 检测到 CUDA toolkit 时构建 CUDA 搜索后端 |
+| `SLIMESEEKER_CUDA_ARCHITECTURES` | `toolchain` | CUDA 目标档位：`toolchain`、`native`、`release` 或显式 CMake 架构列表 |
 
 例如，只构建共享库与 CLI：
 
@@ -56,6 +57,35 @@ cmake --install build --prefix ./dist
 ```
 
 需要和普通 Release 做无 LTO 对照时，可配置 `-DSLIMESEEKER_ENABLE_IPO=OFF`。项目不会全局使用 `-march=native`，平台专用指令只存在于对应的独立编译单元中。
+
+### CUDA 构建与发行产物
+
+默认 `toolchain` 档位尊重 `CMAKE_CUDA_ARCHITECTURES` 和 CUDA 工具链默认值，适合已有统一
+工具链配置的工程。只在当前机器运行时可生成原生 SASS：
+
+```sh
+cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release \
+  -DSLIMESEEKER_CUDA_ARCHITECTURES=native
+cmake --build build-cuda --parallel
+```
+
+正式 Linux CUDA 发行包使用 CUDA 13 的 `release` 档位：
+
+```sh
+cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release \
+  -DSLIMESEEKER_CUDA_ARCHITECTURES=release
+cmake --build build-cuda --parallel
+```
+
+该档位包含 `sm_75/80/86/89/90/100/120` 的真实 SASS，并保留 `compute_120` PTX 供后续兼容
+设备由驱动 JIT。它要求 CUDA 13.0 或更高版本。也可以传入 CMake 原生列表，例如
+`-DSLIMESEEKER_CUDA_ARCHITECTURES="89-real;120-real;120-virtual"`。架构集合同时作用于静态库和
+最终 device-link，避免链接阶段裁掉已经生成的 code object。
+
+GitHub Release 中的 CUDA 包名为
+`slimeseeker-<version>-linux-x86_64-cuda13.tar.gz`。包内 CUDA runtime 静态链接，不要求目标
+机器安装 CUDA Toolkit 或动态 `libcudart`，但仍需要支持包内 SASS/PTX 目标的 NVIDIA 驱动。
+CPU-only 包不加载 CUDA runtime，也不受此要求影响。
 
 ### macOS 首次运行提示
 
