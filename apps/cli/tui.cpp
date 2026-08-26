@@ -116,8 +116,8 @@ public:
         refresh_labels();
         build_components();
         alive_.store(true, std::memory_order_relaxed);
-        refresher_ = std::jthread([this](std::stop_token stop) {
-            while (!stop.stop_requested() && alive_.load(std::memory_order_relaxed)) {
+        refresher_ = std::thread([this] {
+            while (alive_.load(std::memory_order_relaxed)) {
                 std::this_thread::sleep_for(100ms);
                 if (refresh_active_.load(std::memory_order_relaxed))
                     app_.PostEvent(Event::Custom);
@@ -138,7 +138,7 @@ private:
         if (!alive_.exchange(false, std::memory_order_relaxed)) return;
         if (run_) run_->cancel.store(true, std::memory_order_relaxed);
         export_cancel_.store(true, std::memory_order_relaxed);
-        refresher_.request_stop();
+        if (refresher_.joinable()) refresher_.join();
         if (search_worker_.joinable()) search_worker_.join();
         if (export_worker_.joinable()) export_worker_.join();
     }
@@ -290,7 +290,7 @@ private:
         dialog_visible_ = false;
         exit_after_search_ = false;
         auto state = run_;
-        search_worker_ = std::jthread([this, state] {
+        search_worker_ = std::thread([this, state] {
             ResultCollector collector(state->request.retention, state->request.top_k);
             CallbackContext context{state.get(), &collector};
             ss_callbacks_v1 callbacks{sizeof(callbacks), &context,
@@ -476,7 +476,7 @@ private:
         dialog_visible_ = true;
         auto state = run_;
         const std::filesystem::path path = export_path_;
-        export_worker_ = std::jthread([this, state, path, overwrite] {
+        export_worker_ = std::thread([this, state, path, overwrite] {
             const auto status = export_csv_file(path, state->results, overwrite,
                                                 &export_cancel_, &export_completed_);
             export_status_.store(static_cast<int>(status), std::memory_order_relaxed);
@@ -601,8 +601,8 @@ private:
     Component config_page_, running_page_, results_page_, pages_, body_, dialog_component_, root_;
 
     std::shared_ptr<RunState> run_;
-    std::jthread search_worker_;
-    std::jthread refresher_;
+    std::thread search_worker_;
+    std::thread refresher_;
     std::atomic<bool> alive_{false};
     std::atomic<bool> refresh_active_{false};
 
@@ -612,7 +612,7 @@ private:
     int selected_result_ = 0;
 
     std::string export_path_;
-    std::jthread export_worker_;
+    std::thread export_worker_;
     std::atomic<bool> export_cancel_{false};
     std::atomic<bool> export_running_{false};
     std::atomic<bool> export_done_{false};
