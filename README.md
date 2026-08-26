@@ -12,7 +12,8 @@ SlimeSeeker 是一个跨平台的 Minecraft Java Edition 史莱姆区块密度�
 - 提供完整 CPU 与可选 CUDA 搜索后端；CPU 内部支持独立编译和运行时检测的 scalar、AVX2、NEON 位图算子；
 - 按阈值选择滑动圆环、二维 SAT 或滑动方框搜索管线；
 - 提供稳定的版本化 C ABI，回调支持批量结果、进度、取消和主动终止；
-- CLI 支持确定性全量排序、无序流式输出、Top-K 保留、CSV 和基准模式；
+- 默认提供中英文 TUI 工作台，支持参数配置、实时进度、取消、分页结果与后台 CSV 导出；
+- 传统 CLI 支持确定性全量排序、无序流式输出、Top-K 保留、CSV 和基准模式；
 - 包含朴素差分、后端一致性、并发契约、C ABI 和完整黄金回归测试。
 
 ## 构建
@@ -39,12 +40,15 @@ Unix 类平台的 CLI 通常位于 `build/slimeseeker`；Visual Studio 等多配
 | `SLIMESEEKER_ENABLE_IPO` | `ON` | 工具链支持时为优化配置启用 IPO/LTO |
 | `SLIMESEEKER_ENABLE_CUDA` | `ON` | 检测到 CUDA toolkit 时构建 CUDA 搜索后端 |
 | `SLIMESEEKER_CUDA_ARCHITECTURES` | `toolchain` | CUDA 目标档位：`toolchain`、`native`、`release` 或显式 CMake 架构列表 |
+| `SLIMESEEKER_BUILD_TUI` | `ON` | 构建无参数启动的交互式终端工作台 |
+| `SLIMESEEKER_FTXUI_PROVIDER` | `fetch` | 使用固定源码包 `fetch` 或已安装的 `system` FTXUI |
 
 例如，只构建共享库与 CLI：
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DSLIMESEEKER_BUILD_SHARED=ON \
+  -DSLIMESEEKER_BUILD_TUI=OFF \
   -DSLIMESEEKER_BUILD_TESTS=OFF \
   -DSLIMESEEKER_BUILD_BENCHMARKS=OFF
 cmake --build build --parallel
@@ -87,6 +91,19 @@ GitHub Release 中的 CUDA 包名为
 机器安装 CUDA Toolkit 或动态 `libcudart`，但仍需要支持包内 SASS/PTX 目标的 NVIDIA 驱动。
 CPU-only 包不加载 CUDA runtime，也不受此要求影响。
 
+### TUI 依赖
+
+默认构建会下载并校验固定的 FTXUI 7.0.3 源码包，只把它静态链接到 CLI；FTXUI 不会进入
+`SlimeSeeker::slimeseeker` 的公共依赖或安装导出。需要完全离线且系统已经安装 FTXUI 时使用：
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DSLIMESEEKER_FTXUI_PROVIDER=system
+```
+
+只需要传统 CLI 和库时可设置 `-DSLIMESEEKER_BUILD_TUI=OFF`，此时配置阶段不会访问 FTXUI。
+正式安装包包含 FTXUI 的 MIT 许可证，不要求目标机器安装额外终端库。
+
 ### macOS 首次运行提示
 
 当前 GitHub Release 中的 macOS 二进制尚未经过 Apple Developer ID 签名与 notarization。通过浏览器下载后，macOS Gatekeeper 可能提示 Apple 无法验证 `slimeseeker` 是否包含恶意软件。如果文件确实来自本项目的[官方 Release](https://github.com/colorcard/SlimeSeeker/releases)，可以只对解压后的可执行文件移除 quarantine 属性：
@@ -98,6 +115,26 @@ xattr -d com.apple.quarantine /path/to/slimeseeker
 请把 `/path/to/slimeseeker` 替换为实际可执行文件路径，然后重新运行。不要对来源不明的文件执行此命令，也不建议对整个下载目录递归移除 quarantine；后续版本计划接入 Developer ID 签名与 Apple notarization，从发布流程上消除该提示。
 
 ## 命令行用法
+
+在交互式终端直接运行且不传参数会进入 TUI：
+
+```sh
+./build/slimeseeker
+```
+
+也可以显式使用 `./build/slimeseeker --tui`。stdin 或 stdout 不是终端时，TUI 会立即返回错误，
+不会在 CI、管道或脚本中挂起。
+
+TUI 配置页提供 seed、搜索范围、阈值、线程、CPU/CUDA 后端与结果保留策略。默认只保留全局
+排序最佳的 1000 条结果，同时独立统计全部命中；K 可配置到 100 万。全量模式会保留每一条
+结果，当最坏内存估算超过 512 MiB 时必须确认。搜索在后台线程运行，界面保持可响应并支持
+取消；完成或取消后的结果可以分页查看区块坐标、计数、距离平方和对应方块边界。
+
+CSV 导出在后台执行，列为 `x,z,count`。Top-K 模式只导出保留结果；取消或失败后的部分结果
+使用带 `-partial` 的默认文件名并要求确认。覆盖已有文件时先完成临时文件，再以可恢复方式
+替换原文件。
+
+传统非交互命令行保持原有形式：
 
 ```text
 slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
@@ -118,6 +155,7 @@ slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
 | `--top K` | 只保留全局排序最优的 K 条结果 |
 | `-q, --quiet` | 关闭进度显示 |
 | `-b, --benchmark` | 只报告端到端吞吐，不输出结果列表 |
+| `--tui` | 显式进入交互式终端工作台，不能和其他参数组合 |
 | `-v, --version` | 显示版本 |
 | `-h, --help` | 显示帮助 |
 
