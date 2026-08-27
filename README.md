@@ -183,6 +183,6 @@ find_package(SlimeSeeker CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE SlimeSeeker::slimeseeker)
 ```
 
-## 参考
+## 数据来源
 
-群系参数和刷怪表来自 Minecraft Java Edition 的版本化源码与数据文件，Cubiomes 用于对应版本的气候噪声采样。`refer/SlimeRadar` 仅用于人工核对历史结果，不参与构建或运行。
+群系参数和刷怪表来自 Minecraft Java Edition 的版本化源码与数据文件，Cubiomes 用于对应版本的气候噪声采样。
