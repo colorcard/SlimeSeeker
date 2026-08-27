@@ -6,6 +6,18 @@
 
 namespace ss::worldgen26 {
 
+enum class MinecraftVersion : uint8_t {
+    v1_18_2,
+    v1_19_4,
+    v1_20_6,
+    v1_21_3,
+    v26_2,
+};
+
+MinecraftVersion default_version();
+const char *version_name(MinecraftVersion version);
+bool parse_version(const char *text, MinecraftVersion &version);
+
 enum class BiomeProfile : uint8_t {
     common,
     old_growth_pine,
@@ -25,12 +37,15 @@ struct SpawnWeight {
 };
 
 SpawnWeight spawn_weight(BiomeProfile profile);
+SpawnWeight spawn_weight(MinecraftVersion version, BiomeProfile profile);
 double spawn_ratio(BiomeProfile profile);
+double spawn_ratio(MinecraftVersion version, BiomeProfile profile);
 uint32_t spawn_ratio_q32(BiomeProfile profile);
+uint32_t spawn_ratio_q32(MinecraftVersion version, BiomeProfile profile);
 
 class Worldgen26 {
 public:
-    explicit Worldgen26(int64_t seed);
+    explicit Worldgen26(int64_t seed, MinecraftVersion version = default_version());
     ~Worldgen26();
     Worldgen26(Worldgen26 &&) noexcept;
     Worldgen26 &operator=(Worldgen26 &&) noexcept;

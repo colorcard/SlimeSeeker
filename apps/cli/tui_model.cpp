@@ -151,6 +151,9 @@ ValidationResult validate_search_form(const SearchForm &form) {
     if (form.backend < 0 || form.backend > 4) {
         result.error = ValidationError::backend; return result;
     }
+    if (form.mc_version < 0 || form.mc_version > 4) {
+        result.error = ValidationError::mode; return result;
+    }
     if (form.mode < 0 || form.mode > 1) {
         result.error = ValidationError::mode; return result;
     }
@@ -190,6 +193,7 @@ ValidationResult validate_search_form(const SearchForm &form) {
     result.request.top_k = result.request.retention == ResultRetention::top ? static_cast<size_t>(top_k) : 0;
     result.request.spawn_y = spawn_y;
     result.request.player_y = player_y;
+    result.request.mc_version = form.mc_version;
     result.request.candidates = saturated_multiply(side, side);
     result.request.worst_result_bytes = saturated_multiply(result.request.candidates, sizeof(ss_result));
     return result;

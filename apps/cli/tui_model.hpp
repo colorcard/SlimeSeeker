@@ -58,6 +58,7 @@ struct SearchForm {
     std::string biome_top_k = "20";
     std::string spawn_y = "-63";
     std::string player_y = "-38";
+    int mc_version = 4;
     int backend = 0;
     int retention = 0;
     int mode = 0;
@@ -76,6 +77,7 @@ struct SearchRequest {
     size_t top_k = 1000;
     int32_t spawn_y = -63;
     int32_t player_y = -38;
+    int mc_version = 4;
     uint64_t candidates = 0;
     uint64_t worst_result_bytes = 0;
 };

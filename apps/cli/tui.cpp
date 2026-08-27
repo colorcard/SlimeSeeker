@@ -183,6 +183,7 @@ private:
                            tr(TextKey::cuda_backend)};
         labels_retention_ = {tr(TextKey::top_results), tr(TextKey::all_results)};
         labels_mode_ = {tr(TextKey::density_mode), tr(TextKey::biome_mode)};
+        labels_version_ = {"1.18.2", "1.19.4", "1.20.6", "1.21.3", "26.2"};
         label_start_ = tr(TextKey::start);
         label_quit_ = tr(TextKey::quit);
         label_cancel_ = tr(TextKey::cancel);
@@ -205,6 +206,7 @@ private:
         biome_top_k_input_ = Input(&form_.biome_top_k, "20");
         spawn_y_input_ = Input(&form_.spawn_y, "-63");
         player_y_input_ = Input(&form_.player_y, "-38");
+        version_toggle_ = Toggle(&labels_version_, &form_.mc_version);
         backend_dropdown_ = Toggle(&labels_backend_, &form_.backend);
         retention_toggle_ = Toggle(&labels_retention_, &form_.retention);
         mode_toggle_ = Toggle(&labels_mode_, &form_.mode);
@@ -218,7 +220,7 @@ private:
             {top_k_input_, Container::Vertical({})}, &form_.retention);
         auto density_fields = Container::Vertical({retention_toggle_, density_top_fields});
         auto biome_fields = Container::Vertical(
-            {biome_top_k_input_, spawn_y_input_, player_y_input_});
+            {version_toggle_, biome_top_k_input_, spawn_y_input_, player_y_input_});
         auto mode_fields = Container::Tab({density_fields, biome_fields}, &form_.mode);
         config_container_ = Container::Vertical({mode_toggle_, seed_input_, range_input_, threshold_input_,
             threads_input_, backend_dropdown_, mode_fields, config_buttons});
@@ -230,6 +232,7 @@ private:
                 field_row(TextKey::threshold, threshold_input_), field_row(TextKey::threads, threads_input_),
                 field_row(TextKey::backend, backend_dropdown_)};
             if (form_.mode == 1) {
+                fields.push_back(field_row_label(language_ == Language::chinese ? "Minecraft 版本" : "Minecraft version", version_toggle_));
                 fields.push_back(field_row(TextKey::top_k, biome_top_k_input_));
                 fields.push_back(field_row(TextKey::spawn_y, spawn_y_input_));
                 fields.push_back(field_row(TextKey::player_y, player_y_input_));
@@ -318,8 +321,12 @@ private:
     }
 
     Element field_row(TextKey label, const Component &component) const {
-        return hbox({text(tr(label)) | size(WIDTH, EQUAL, 20),
-                     component->Render() | flex}) | size(HEIGHT, EQUAL, 1);
+        return field_row_label(tr(label), component);
+    }
+
+    Element field_row_label(const std::string &label, const Component &component) const {
+        return hbox({text(label) | size(WIDTH, EQUAL, 20), component->Render() | flex}) |
+               size(HEIGHT, EQUAL, 1);
     }
 
     std::vector<Component> active_focus_order() const {
@@ -484,7 +491,8 @@ private:
             try {
                 if (state->request.mode == SearchMode::biome) {
                     BiomeScorer scorer(state->request.params.world_seed, state->request.top_k,
-                                       state->request.spawn_y, state->request.player_y);
+                                       state->request.spawn_y, state->request.player_y,
+                                       static_cast<worldgen26::MinecraftVersion>(state->request.mc_version));
                     CallbackContext context{state.get(), nullptr, &scorer};
                     ss_callbacks_v1 callbacks{sizeof(callbacks), &context,
                         collect_results, collect_progress, collect_cancel};
@@ -943,6 +951,7 @@ private:
     std::vector<std::string> labels_backend_;
     std::vector<std::string> labels_retention_;
     std::vector<std::string> labels_mode_;
+    std::vector<std::string> labels_version_;
     std::string label_start_, label_quit_, label_cancel_, label_back_, label_rerun_;
     std::string label_export_, label_previous_, label_next_, label_confirm_, label_dismiss_;
     std::string label_reset_;
@@ -950,7 +959,7 @@ private:
     App app_;
     Component seed_input_, range_input_, threshold_input_, threads_input_, top_k_input_;
     Component biome_top_k_input_, spawn_y_input_, player_y_input_;
-    Component backend_dropdown_, retention_toggle_, mode_toggle_, language_toggle_, export_path_input_;
+    Component backend_dropdown_, retention_toggle_, mode_toggle_, version_toggle_, language_toggle_, export_path_input_;
     Component start_button_, reset_button_, quit_button_, cancel_button_;
     Component previous_button_, next_button_, back_button_, rerun_button_, export_button_;
     Component result_quit_button_, confirm_button_, dismiss_button_;

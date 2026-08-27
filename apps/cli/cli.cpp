@@ -5,6 +5,7 @@
  */
 #include "cli.hpp"
 #include "biome_score.hpp"
+#include "worldgen26/worldgen26.hpp"
 #include "slimeseeker/slimeseeker.h"
 
 #include <algorithm>
@@ -113,6 +114,7 @@ void usage(const char *program) {
         "      --top K                 retain only the best K results\n"
         "      --spawn-y Y             biome/spawn feet Y (default -63)\n"
         "      --player-y Y            AFK player feet Y (default -38)\n"
+        "      --mc-version VERSION    biome generator: 1.18.2, 1.19.4, 1.20.6, 1.21.3, 26.2\n"
         "  -q, --quiet                 disable progress\n"
         "  -b, --benchmark             report throughput, omit results\n"
         "      --tui                   open interactive terminal UI\n"
@@ -139,6 +141,7 @@ int run_command_line(int argc, char **argv) {
     int32_t spawn_y = -63;
     int32_t player_y = -38;
     bool custom_y = false;
+    worldgen26::MinecraftVersion mc_version = worldgen26::default_version();
     if (biome_mode) {
         context.mode = ResultMode::top;
         context.top_count = 20;
@@ -181,6 +184,12 @@ int run_command_line(int argc, char **argv) {
             const char *v = value(); if (!v || !parse_integer(v, player_y)) { usage(argv[0]); return 1; }
             custom_y = true; continue;
         }
+        if (!std::strcmp(argument, "--mc-version")) {
+            const char *v = value();
+            if (!v || !worldgen26::parse_version(v, mc_version)) { usage(argv[0]); return 1; }
+            if (!biome_mode) { std::fprintf(stderr, "--mc-version requires biome-score\n"); return 1; }
+            continue;
+        }
         if (argument[0] == '-' && !(argument[1] >= '0' && argument[1] <= '9')) {
             std::fprintf(stderr, "unknown option: %s\n", argument); return 1;
         }
@@ -207,7 +216,7 @@ int run_command_line(int argc, char **argv) {
     }
     if (biome_mode) {
         try {
-            context.biome_scorer = std::make_unique<BiomeScorer>(seed, context.top_count, spawn_y, player_y);
+            context.biome_scorer = std::make_unique<BiomeScorer>(seed, context.top_count, spawn_y, player_y, mc_version);
         } catch (const std::exception &error) {
             std::fprintf(stderr, "cannot initialize biome scoring: %s\n", error.what());
             return 1;

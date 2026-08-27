@@ -9,7 +9,7 @@ extern "C" {
 
 typedef struct ss_cubiomes_sampler ss_cubiomes_sampler;
 
-ss_cubiomes_sampler *ss_cubiomes_create(int64_t seed);
+ss_cubiomes_sampler *ss_cubiomes_create(int64_t seed, int minecraft_version);
 void ss_cubiomes_destroy(ss_cubiomes_sampler *sampler);
 void ss_cubiomes_climate(const ss_cubiomes_sampler *sampler, int block_x, int block_y, int block_z,
                          int64_t climate[6]);

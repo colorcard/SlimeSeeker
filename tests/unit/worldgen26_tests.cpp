@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 namespace {
 
@@ -39,5 +40,12 @@ int main() {
     if (swamp.slime_group_weight != 401 || swamp.monster_weight != 516) return 1;
     const auto sulfur = ss::worldgen26::spawn_weight(BiomeProfile::sulfur);
     if (sulfur.slime_group_weight != 25 || sulfur.monster_weight != 311) return 1;
+    const auto old_sulfur = ss::worldgen26::spawn_weight(
+        ss::worldgen26::MinecraftVersion::v1_20_6, BiomeProfile::sulfur);
+    if (old_sulfur.slime_group_weight != 0 || old_sulfur.monster_weight != 0) return 1;
+    ss::worldgen26::MinecraftVersion parsed{};
+    if (!ss::worldgen26::parse_version("1.18", parsed) ||
+        parsed != ss::worldgen26::MinecraftVersion::v1_18_2 ||
+        std::string(ss::worldgen26::version_name(parsed)) != "1.18.2") return 1;
     return 0;
 }

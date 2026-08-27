@@ -15,7 +15,6 @@
 namespace ss::cli {
 namespace {
 
-using worldgen26::spawn_ratio_q32;
 
 int64_t result_distance(const ss_result &result) {
     return static_cast<int64_t>(result.x) * result.x + static_cast<int64_t>(result.z) * result.z;
@@ -47,8 +46,8 @@ struct BiomeScorer::Impl {
         std::array<uint32_t, 256> ratio;
     };
 
-    Impl(int64_t world_seed, size_t keep, int32_t spawn, int32_t player)
-        : seed(world_seed), top_count(keep), spawn_y(spawn), player_y(player), world(world_seed) {}
+    Impl(int64_t world_seed, size_t keep, int32_t spawn, int32_t player, worldgen26::MinecraftVersion version)
+        : seed(world_seed), top_count(keep), spawn_y(spawn), player_y(player), version(version), world(world_seed, version) {}
 
     uint64_t chunk_score(int32_t chunk_x, int32_t chunk_z) {
         const uint64_t key = chunk_key(chunk_x, chunk_z);
@@ -58,7 +57,7 @@ struct BiomeScorer::Impl {
         const int32_t base_z = chunk_z * 16;
         for (int32_t z = 0; z < 16; ++z)
             for (int32_t x = 0; x < 16; ++x)
-                score += spawn_ratio_q32(world.biome_at_block(base_x + x, spawn_y, base_z + z));
+                score += worldgen26::spawn_ratio_q32(version, world.biome_at_block(base_x + x, spawn_y, base_z + z));
 
         constexpr size_t kCacheCapacity = 65536;
         if (chunk_scores.size() == kCacheCapacity) {
@@ -93,7 +92,7 @@ struct BiomeScorer::Impl {
             for (int32_t z = 0; z < 16; ++z)
                 for (int32_t x = 0; x < 16; ++x)
                     cells.ratio[static_cast<size_t>(z * 16 + x)] =
-                        spawn_ratio_q32(world.biome_at_block(base_x + x, spawn_y, base_z + z));
+                        worldgen26::spawn_ratio_q32(version, world.biome_at_block(base_x + x, spawn_y, base_z + z));
             result.push_back(std::move(cells));
         }
         return true;
@@ -152,13 +151,15 @@ struct BiomeScorer::Impl {
     int32_t spawn_y;
     int32_t player_y;
     worldgen26::Worldgen26 world;
+    worldgen26::MinecraftVersion version;
     std::unordered_map<uint64_t, uint64_t> chunk_scores;
     std::deque<uint64_t> cache_order;
     std::priority_queue<BiomeRankedResult, std::vector<BiomeRankedResult>, BetterHeap> top;
 };
 
-BiomeScorer::BiomeScorer(int64_t seed, size_t top_count, int32_t spawn_y, int32_t player_y)
-    : impl_(std::make_unique<Impl>(seed, top_count, spawn_y, player_y)) {}
+BiomeScorer::BiomeScorer(int64_t seed, size_t top_count, int32_t spawn_y, int32_t player_y,
+                         worldgen26::MinecraftVersion version)
+    : impl_(std::make_unique<Impl>(seed, top_count, spawn_y, player_y, version)) {}
 BiomeScorer::~BiomeScorer() = default;
 BiomeScorer::BiomeScorer(BiomeScorer &&) noexcept = default;
 BiomeScorer &BiomeScorer::operator=(BiomeScorer &&) noexcept = default;

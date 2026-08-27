@@ -8,11 +8,11 @@ struct ss_cubiomes_sampler {
     uint64_t sha;
 };
 
-ss_cubiomes_sampler *ss_cubiomes_create(int64_t seed) {
+ss_cubiomes_sampler *ss_cubiomes_create(int64_t seed, int minecraft_version) {
     ss_cubiomes_sampler *sampler = (ss_cubiomes_sampler *)calloc(1, sizeof(*sampler));
     if (sampler == NULL) return NULL;
     sampler->sha = getVoronoiSHA((uint64_t)seed);
-    initBiomeNoise(&sampler->noise, MC_1_21_WD);
+    initBiomeNoise(&sampler->noise, minecraft_version);
     setBiomeSeed(&sampler->noise, (uint64_t)seed, 0);
     return sampler;
 }

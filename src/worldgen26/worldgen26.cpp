@@ -1,10 +1,12 @@
 #include "worldgen26/worldgen26.hpp"
 #include "worldgen26/cubiomes_bridge.h"
+#include "worldgen26/third_party/cubiomes/biomes.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -12,6 +14,17 @@
 
 namespace ss::worldgen26 {
 namespace {
+
+int cubiomes_version(MinecraftVersion version) {
+    switch (version) {
+    case MinecraftVersion::v1_18_2: return MC_1_18_2;
+    case MinecraftVersion::v1_19_4: return MC_1_19_4;
+    case MinecraftVersion::v1_20_6: return MC_1_20_6;
+    case MinecraftVersion::v1_21_3: return MC_1_21_3;
+    case MinecraftVersion::v26_2: return MC_1_21_WD;
+    }
+    return MC_1_21_WD;
+}
 
 struct Parameter {
     int64_t min;
@@ -23,9 +36,29 @@ struct ParameterPoint {
     BiomeProfile profile;
 };
 
-constexpr ParameterPoint kParameterPoints[] = {
+constexpr ParameterPoint kParameterPoints_26_2[] = {
 #include "worldgen26/generated/biome_parameters_26_2.inc"
 };
+struct VersionData {
+    const ParameterPoint *points;
+    size_t point_count;
+};
+
+const VersionData &version_data(MinecraftVersion version) {
+    static const VersionData v26{kParameterPoints_26_2, std::size(kParameterPoints_26_2)};
+    switch (version) {
+    // Cubiomes supplies the version-specific climate sampler. The parameter
+    // partition is shared until a generated OverworldBiomeBuilder table is
+    // available for that release; keeping this explicit makes the fallback
+    // visible and replaceable rather than silently binding the constructor.
+    case MinecraftVersion::v1_18_2:
+    case MinecraftVersion::v1_19_4:
+    case MinecraftVersion::v1_20_6:
+    case MinecraftVersion::v1_21_3:
+    case MinecraftVersion::v26_2: return v26;
+    }
+    return v26;
+}
 
 struct Node {
     std::array<Parameter, 7> space{};
@@ -130,10 +163,11 @@ std::shared_ptr<Node> build_tree(std::vector<std::shared_ptr<Node>> nodes) {
     return subtree(std::move(children));
 }
 
-std::shared_ptr<Node> make_tree() {
+std::shared_ptr<Node> make_tree(const VersionData &data) {
     std::vector<std::shared_ptr<Node>> leaves;
-    leaves.reserve(std::size(kParameterPoints));
-    for (const auto &point : kParameterPoints) {
+    leaves.reserve(data.point_count);
+    for (size_t i = 0; i < data.point_count; ++i) {
+        const auto &point = data.points[i];
         auto node = std::make_shared<Node>();
         node->space = point.space;
         node->leaf = &point;
@@ -170,17 +204,44 @@ const ParameterPoint *search_node(const Node &node, const std::array<int64_t, 7>
 } // namespace
 
 struct Worldgen26::Impl {
-    explicit Impl(int64_t seed)
-        : sampler(ss_cubiomes_create(seed), ss_cubiomes_destroy), root(make_tree()) {
+    explicit Impl(int64_t seed, MinecraftVersion version)
+        : sampler(ss_cubiomes_create(seed, cubiomes_version(version)), ss_cubiomes_destroy), root(make_tree(version_data(version))), version(version) {
         if (!sampler) throw std::bad_alloc();
     }
 
     std::unique_ptr<ss_cubiomes_sampler, decltype(&ss_cubiomes_destroy)> sampler;
     std::shared_ptr<Node> root;
     const ParameterPoint *last = nullptr;
+    MinecraftVersion version;
 };
 
-SpawnWeight spawn_weight(BiomeProfile profile) {
+MinecraftVersion default_version() { return MinecraftVersion::v26_2; }
+
+const char *version_name(MinecraftVersion version) {
+    switch (version) {
+    case MinecraftVersion::v1_18_2: return "1.18.2";
+    case MinecraftVersion::v1_19_4: return "1.19.4";
+    case MinecraftVersion::v1_20_6: return "1.20.6";
+    case MinecraftVersion::v1_21_3: return "1.21.3";
+    case MinecraftVersion::v26_2: return "26.2";
+    }
+    return "26.2";
+}
+
+bool parse_version(const char *text, MinecraftVersion &version) {
+    if (!text) return false;
+    if (std::strcmp(text, "1.18") == 0 || std::strcmp(text, "1.18.2") == 0) version = MinecraftVersion::v1_18_2;
+    else if (std::strcmp(text, "1.19") == 0 || std::strcmp(text, "1.19.4") == 0) version = MinecraftVersion::v1_19_4;
+    else if (std::strcmp(text, "1.20") == 0 || std::strcmp(text, "1.20.6") == 0) version = MinecraftVersion::v1_20_6;
+    else if (std::strcmp(text, "1.21") == 0 || std::strcmp(text, "1.21.3") == 0) version = MinecraftVersion::v1_21_3;
+    else if (std::strcmp(text, "26.2") == 0) version = MinecraftVersion::v26_2;
+    else return false;
+    return true;
+}
+
+SpawnWeight spawn_weight(MinecraftVersion version, BiomeProfile profile) {
+    if (version != MinecraftVersion::v26_2 && profile == BiomeProfile::sulfur)
+        return {0, 0};
     switch (profile) {
     case BiomeProfile::common: return {400, 515};
     case BiomeProfile::old_growth_pine: return {400, 540};
@@ -196,19 +257,30 @@ SpawnWeight spawn_weight(BiomeProfile profile) {
     return {0, 0};
 }
 
+SpawnWeight spawn_weight(BiomeProfile profile) { return spawn_weight(default_version(), profile); }
+
 double spawn_ratio(BiomeProfile profile) {
-    const auto weight = spawn_weight(profile);
+    const auto weight = spawn_weight(default_version(), profile);
+    return weight.monster_weight ? static_cast<double>(weight.slime_group_weight) / weight.monster_weight : 0.0;
+}
+
+double spawn_ratio(MinecraftVersion version, BiomeProfile profile) {
+    const auto weight = spawn_weight(version, profile);
     return weight.monster_weight ? static_cast<double>(weight.slime_group_weight) / weight.monster_weight : 0.0;
 }
 
 uint32_t spawn_ratio_q32(BiomeProfile profile) {
-    const auto weight = spawn_weight(profile);
+    return spawn_ratio_q32(default_version(), profile);
+}
+
+uint32_t spawn_ratio_q32(MinecraftVersion version, BiomeProfile profile) {
+    const auto weight = spawn_weight(version, profile);
     if (!weight.monster_weight) return 0;
     const uint64_t scaled = static_cast<uint64_t>(weight.slime_group_weight) << 32;
     return static_cast<uint32_t>((scaled + weight.monster_weight / 2) / weight.monster_weight);
 }
 
-Worldgen26::Worldgen26(int64_t seed) : impl_(std::make_unique<Impl>(seed)) {}
+Worldgen26::Worldgen26(int64_t seed, MinecraftVersion version) : impl_(std::make_unique<Impl>(seed, version)) {}
 Worldgen26::~Worldgen26() = default;
 Worldgen26::Worldgen26(Worldgen26 &&) noexcept = default;
 Worldgen26 &Worldgen26::operator=(Worldgen26 &&) noexcept = default;
