@@ -2,7 +2,7 @@
 #pragma once
 
 #include "slimeseeker/slimeseeker.h"
-#include "worldgen26/worldgen26.hpp"
+#include "worldgen/worldgen.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -43,7 +43,7 @@ struct BiomeRankedResult {
 class BiomeScorer {
 public:
     BiomeScorer(int64_t seed, size_t top_count, int32_t spawn_y, int32_t player_y,
-                worldgen26::MinecraftVersion version = worldgen26::default_version());
+                worldgen::MinecraftVersion version = worldgen::default_version());
     ~BiomeScorer();
     BiomeScorer(BiomeScorer &&) noexcept;
     BiomeScorer &operator=(BiomeScorer &&) noexcept;

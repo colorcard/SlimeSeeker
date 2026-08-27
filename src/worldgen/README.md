@@ -13,6 +13,6 @@ score. The table is factual generated data; Java, Fabric Loom, and the research
 export are not runtime or build dependencies.
 
 The climate noise constants and terrain depth path were checked against the
-unpacked 26.2 sources. Golden coordinates in `tests/unit/worldgen26_tests.cpp`
+unpacked 26.2 sources. Golden coordinates in `tests/unit/worldgen_tests.cpp`
 were sampled through the original 26.2 `RandomState`, `MultiNoiseBiomeSource`,
 and `BiomeManager`, including the new sulfur caves profile.

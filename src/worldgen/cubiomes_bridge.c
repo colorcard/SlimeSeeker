@@ -1,5 +1,5 @@
-#include "worldgen26/cubiomes_bridge.h"
-#include "worldgen26/third_party/cubiomes/biomenoise.h"
+#include "worldgen/cubiomes_bridge.h"
+#include "worldgen/third_party/cubiomes/biomenoise.h"
 
 #include <stdlib.h>
 

@@ -1,4 +1,4 @@
-#include "worldgen26/worldgen26.hpp"
+#include "worldgen/worldgen.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -6,8 +6,8 @@
 
 namespace {
 
-void expect_profile(ss::worldgen26::Worldgen26 &world, int x, int y, int z,
-                    ss::worldgen26::BiomeProfile expected) {
+void expect_profile(ss::worldgen::Worldgen &world, int x, int y, int z,
+                    ss::worldgen::BiomeProfile expected) {
     if (world.biome_at_block(x, y, z) != expected) {
         std::fprintf(stderr, "unexpected Minecraft 26.2 biome profile at (%d,%d,%d)\n", x, y, z);
         std::exit(1);
@@ -17,8 +17,8 @@ void expect_profile(ss::worldgen26::Worldgen26 &world, int x, int y, int z,
 } // namespace
 
 int main() {
-    using ss::worldgen26::BiomeProfile;
-    ss::worldgen26::Worldgen26 seed_zero(0);
+    using ss::worldgen::BiomeProfile;
+    ss::worldgen::Worldgen seed_zero(0);
     expect_profile(seed_zero, 0, -63, 0, BiomeProfile::river);
     expect_profile(seed_zero, 224, -63, 320, BiomeProfile::common);
     expect_profile(seed_zero, -1024, -63, 2048, BiomeProfile::empty);
@@ -36,16 +36,16 @@ int main() {
     expect_profile(seed_zero, 17248, -63, -17056, BiomeProfile::sulfur);
     expect_profile(seed_zero, -10784, -63, -19488, BiomeProfile::swamp);
 
-    const auto swamp = ss::worldgen26::spawn_weight(BiomeProfile::swamp);
+    const auto swamp = ss::worldgen::spawn_weight(BiomeProfile::swamp);
     if (swamp.slime_group_weight != 401 || swamp.monster_weight != 516) return 1;
-    const auto sulfur = ss::worldgen26::spawn_weight(BiomeProfile::sulfur);
+    const auto sulfur = ss::worldgen::spawn_weight(BiomeProfile::sulfur);
     if (sulfur.slime_group_weight != 25 || sulfur.monster_weight != 311) return 1;
-    const auto old_sulfur = ss::worldgen26::spawn_weight(
-        ss::worldgen26::MinecraftVersion::v1_20_6, BiomeProfile::sulfur);
+    const auto old_sulfur = ss::worldgen::spawn_weight(
+        ss::worldgen::MinecraftVersion::v1_20_6, BiomeProfile::sulfur);
     if (old_sulfur.slime_group_weight != 0 || old_sulfur.monster_weight != 0) return 1;
-    ss::worldgen26::MinecraftVersion parsed{};
-    if (!ss::worldgen26::parse_version("1.18", parsed) ||
-        parsed != ss::worldgen26::MinecraftVersion::v1_18_2 ||
-        std::string(ss::worldgen26::version_name(parsed)) != "1.18.2") return 1;
+    ss::worldgen::MinecraftVersion parsed{};
+    if (!ss::worldgen::parse_version("1.18", parsed) ||
+        parsed != ss::worldgen::MinecraftVersion::v1_18_2 ||
+        std::string(ss::worldgen::version_name(parsed)) != "1.18.2") return 1;
     return 0;
 }

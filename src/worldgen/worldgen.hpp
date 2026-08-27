@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace ss::worldgen26 {
+namespace ss::worldgen {
 
 enum class MinecraftVersion : uint8_t {
     v1_18_2,
@@ -43,14 +43,14 @@ double spawn_ratio(MinecraftVersion version, BiomeProfile profile);
 uint32_t spawn_ratio_q32(BiomeProfile profile);
 uint32_t spawn_ratio_q32(MinecraftVersion version, BiomeProfile profile);
 
-class Worldgen26 {
+class Worldgen {
 public:
-    explicit Worldgen26(int64_t seed, MinecraftVersion version = default_version());
-    ~Worldgen26();
-    Worldgen26(Worldgen26 &&) noexcept;
-    Worldgen26 &operator=(Worldgen26 &&) noexcept;
-    Worldgen26(const Worldgen26 &) = delete;
-    Worldgen26 &operator=(const Worldgen26 &) = delete;
+    explicit Worldgen(int64_t seed, MinecraftVersion version = default_version());
+    ~Worldgen();
+    Worldgen(Worldgen &&) noexcept;
+    Worldgen &operator=(Worldgen &&) noexcept;
+    Worldgen(const Worldgen &) = delete;
+    Worldgen &operator=(const Worldgen &) = delete;
 
     BiomeProfile biome_at_block(int32_t x, int32_t y, int32_t z);
 
@@ -59,4 +59,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace ss::worldgen26
+} // namespace ss::worldgen

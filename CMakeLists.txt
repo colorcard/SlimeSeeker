@@ -137,14 +137,14 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(slimeseeker PRIVATE Threads::Threads)
 
-add_library(slimeseeker_worldgen26 STATIC
-  src/worldgen26/worldgen26.cpp
-  src/worldgen26/cubiomes_bridge.c
-  src/worldgen26/third_party/cubiomes/biomenoise.c
-  src/worldgen26/third_party/cubiomes/noise.c
-  src/worldgen26/third_party/cubiomes/layers.c
-  src/worldgen26/third_party/cubiomes/biomes.c)
-target_include_directories(slimeseeker_worldgen26 PRIVATE src)
+add_library(slimeseeker_worldgen STATIC
+  src/worldgen/worldgen.cpp
+  src/worldgen/cubiomes_bridge.c
+  src/worldgen/third_party/cubiomes/biomenoise.c
+  src/worldgen/third_party/cubiomes/noise.c
+  src/worldgen/third_party/cubiomes/layers.c
+  src/worldgen/third_party/cubiomes/biomes.c)
+target_include_directories(slimeseeker_worldgen PRIVATE src)
 
 add_executable(slimeseeker_cli
   apps/cli/main.cpp
@@ -175,7 +175,7 @@ else()
 endif()
 ss_enable_ipo(slimeseeker_cli)
 set_target_properties(slimeseeker_cli PROPERTIES OUTPUT_NAME slimeseeker)
-target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker slimeseeker_worldgen26)
+target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker slimeseeker_worldgen)
 
 include(GNUInstallDirs)
 install(TARGETS slimeseeker slimeseeker_cli EXPORT SlimeSeekerTargets
@@ -216,10 +216,10 @@ if(SLIMESEEKER_BUILD_TESTS)
   set_target_properties(slimeseeker_c_api_smoke PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(slimeseeker_c_api_smoke PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME c_api_smoke COMMAND slimeseeker_c_api_smoke)
-  add_executable(slimeseeker_worldgen26_tests tests/unit/worldgen26_tests.cpp)
-  target_include_directories(slimeseeker_worldgen26_tests PRIVATE src)
-  target_link_libraries(slimeseeker_worldgen26_tests PRIVATE slimeseeker_worldgen26)
-  add_test(NAME worldgen26_tests COMMAND slimeseeker_worldgen26_tests)
+  add_executable(slimeseeker_worldgen_tests tests/unit/worldgen_tests.cpp)
+  target_include_directories(slimeseeker_worldgen_tests PRIVATE src)
+  target_link_libraries(slimeseeker_worldgen_tests PRIVATE slimeseeker_worldgen)
+  add_test(NAME worldgen_tests COMMAND slimeseeker_worldgen_tests)
   add_test(NAME biome_score_cli
     COMMAND ${CMAKE_COMMAND}
       -DSLIMESEEKER_CLI=$<TARGET_FILE:slimeseeker_cli>

@@ -5,7 +5,7 @@
  */
 #include "cli.hpp"
 #include "biome_score.hpp"
-#include "worldgen26/worldgen26.hpp"
+#include "worldgen/worldgen.hpp"
 #include "slimeseeker/slimeseeker.h"
 
 #include <algorithm>
@@ -141,7 +141,7 @@ int run_command_line(int argc, char **argv) {
     int32_t spawn_y = -63;
     int32_t player_y = -38;
     bool custom_y = false;
-    worldgen26::MinecraftVersion mc_version = worldgen26::default_version();
+    worldgen::MinecraftVersion mc_version = worldgen::default_version();
     if (biome_mode) {
         context.mode = ResultMode::top;
         context.top_count = 20;
@@ -186,7 +186,7 @@ int run_command_line(int argc, char **argv) {
         }
         if (!std::strcmp(argument, "--mc-version")) {
             const char *v = value();
-            if (!v || !worldgen26::parse_version(v, mc_version)) { usage(argv[0]); return 1; }
+            if (!v || !worldgen::parse_version(v, mc_version)) { usage(argv[0]); return 1; }
             if (!biome_mode) { std::fprintf(stderr, "--mc-version requires biome-score\n"); return 1; }
             continue;
         }

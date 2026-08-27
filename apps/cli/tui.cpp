@@ -424,9 +424,9 @@ private:
         std::string summary = tr(TextKey::candidates) + ": " + grouped_integer(request.candidates) +
             "  |  ";
         if (request.mode == SearchMode::biome) {
-            const auto version = static_cast<worldgen26::MinecraftVersion>(request.mc_version);
+            const auto version = static_cast<worldgen::MinecraftVersion>(request.mc_version);
             summary += (language_ == Language::chinese ? "版本: " : "Minecraft: ") +
-                       std::string(worldgen26::version_name(version)) + "  |  ";
+                       std::string(worldgen::version_name(version)) + "  |  ";
         }
         if (request.retention == ResultRetention::all) {
             summary += tr(TextKey::all_results) + "  |  " + tr(TextKey::worst_memory) + ": " +
@@ -499,7 +499,7 @@ private:
                 if (state->request.mode == SearchMode::biome) {
                     BiomeScorer scorer(state->request.params.world_seed, state->request.top_k,
                                        state->request.spawn_y, state->request.player_y,
-                                       static_cast<worldgen26::MinecraftVersion>(state->request.mc_version));
+                                       static_cast<worldgen::MinecraftVersion>(state->request.mc_version));
                     CallbackContext context{state.get(), nullptr, &scorer};
                     ss_callbacks_v1 callbacks{sizeof(callbacks), &context,
                         collect_results, collect_progress, collect_cancel};

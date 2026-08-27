@@ -1,6 +1,6 @@
-#include "worldgen26/worldgen26.hpp"
-#include "worldgen26/cubiomes_bridge.h"
-#include "worldgen26/third_party/cubiomes/biomes.h"
+#include "worldgen/worldgen.hpp"
+#include "worldgen/cubiomes_bridge.h"
+#include "worldgen/third_party/cubiomes/biomes.h"
 
 #include <algorithm>
 #include <array>
@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace ss::worldgen26 {
+namespace ss::worldgen {
 namespace {
 
 int cubiomes_version(MinecraftVersion version) {
@@ -37,7 +37,7 @@ struct ParameterPoint {
 };
 
 constexpr ParameterPoint kParameterPoints_26_2[] = {
-#include "worldgen26/generated/biome_parameters_26_2.inc"
+#include "worldgen/generated/biome_parameters_26_2.inc"
 };
 struct VersionData {
     const ParameterPoint *points;
@@ -203,7 +203,7 @@ const ParameterPoint *search_node(const Node &node, const std::array<int64_t, 7>
 
 } // namespace
 
-struct Worldgen26::Impl {
+struct Worldgen::Impl {
     explicit Impl(int64_t seed, MinecraftVersion version)
         : sampler(ss_cubiomes_create(seed, cubiomes_version(version)), ss_cubiomes_destroy), root(make_tree(version_data(version))), version(version) {
         if (!sampler) throw std::bad_alloc();
@@ -280,12 +280,12 @@ uint32_t spawn_ratio_q32(MinecraftVersion version, BiomeProfile profile) {
     return static_cast<uint32_t>((scaled + weight.monster_weight / 2) / weight.monster_weight);
 }
 
-Worldgen26::Worldgen26(int64_t seed, MinecraftVersion version) : impl_(std::make_unique<Impl>(seed, version)) {}
-Worldgen26::~Worldgen26() = default;
-Worldgen26::Worldgen26(Worldgen26 &&) noexcept = default;
-Worldgen26 &Worldgen26::operator=(Worldgen26 &&) noexcept = default;
+Worldgen::Worldgen(int64_t seed, MinecraftVersion version) : impl_(std::make_unique<Impl>(seed, version)) {}
+Worldgen::~Worldgen() = default;
+Worldgen::Worldgen(Worldgen &&) noexcept = default;
+Worldgen &Worldgen::operator=(Worldgen &&) noexcept = default;
 
-BiomeProfile Worldgen26::biome_at_block(int32_t x, int32_t y, int32_t z) {
+BiomeProfile Worldgen::biome_at_block(int32_t x, int32_t y, int32_t z) {
     int64_t climate[6];
     ss_cubiomes_climate(impl_->sampler.get(), x, y, z, climate);
     std::array<int64_t, 7> target{climate[0], climate[1], climate[2], climate[3], climate[4], climate[5], 0};
@@ -294,4 +294,4 @@ BiomeProfile Worldgen26::biome_at_block(int32_t x, int32_t y, int32_t z) {
     return impl_->last->profile;
 }
 
-} // namespace ss::worldgen26
+} // namespace ss::worldgen
