@@ -114,7 +114,7 @@ void usage(const char *program) {
         "      --top K                 retain only the best K results\n"
         "      --spawn-y Y             biome/spawn feet Y (default -63)\n"
         "      --player-y Y            AFK player feet Y (default -38)\n"
-        "      --mc-version VERSION    biome generator: 1.18.2, 1.19.4, 1.20.6, 1.21.3, 26.2\n"
+        "      --mc-version VERSION    biome generator version (1.18.2|1.19.4|1.20.6|1.21.3|26.2)\n"
         "  -q, --quiet                 disable progress\n"
         "  -b, --benchmark             report throughput, omit results\n"
         "      --tui                   open interactive terminal UI\n"
@@ -209,7 +209,7 @@ int run_command_line(int argc, char **argv) {
         std::fprintf(stderr, "RANGE is too large for block-coordinate biome sampling\n"); return 1;
     }
     if (biome_mode && (spawn_y < -64 || spawn_y > 319 || player_y < -64 || player_y > 319)) {
-        std::fprintf(stderr, "spawn and player Y must be within the 26.2 overworld build range [-64,319]\n"); return 1;
+        std::fprintf(stderr, "spawn and player Y must be within the selected overworld build range [-64,319]\n"); return 1;
     }
     if (!biome_mode && custom_y) {
         std::fprintf(stderr, "--spawn-y and --player-y require biome-score\n"); return 1;

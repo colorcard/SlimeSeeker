@@ -354,6 +354,7 @@ private:
         std::vector<Component> order{mode_toggle_, seed_input_, range_input_, threshold_input_,
                                      threads_input_, backend_dropdown_};
         if (form_.mode == 1) {
+            order.push_back(version_toggle_);
             order.push_back(biome_top_k_input_);
             order.push_back(spawn_y_input_);
             order.push_back(player_y_input_);
@@ -405,6 +406,7 @@ private:
         if (threshold_input_->Focused()) return TextKey::help_threshold;
         if (threads_input_->Focused()) return TextKey::help_threads;
         if (backend_dropdown_->Focused()) return TextKey::help_backend;
+        if (version_toggle_->Focused()) return TextKey::help_mode_biome;
         if (retention_toggle_->Focused()) return TextKey::help_retention;
         if (top_k_input_->Focused()) return TextKey::help_top_k;
         if (biome_top_k_input_->Focused()) return TextKey::help_biome_top_k;
@@ -421,6 +423,11 @@ private:
         const auto &request = validation.request;
         std::string summary = tr(TextKey::candidates) + ": " + grouped_integer(request.candidates) +
             "  |  ";
+        if (request.mode == SearchMode::biome) {
+            const auto version = static_cast<worldgen26::MinecraftVersion>(request.mc_version);
+            summary += (language_ == Language::chinese ? "版本: " : "Minecraft: ") +
+                       std::string(worldgen26::version_name(version)) + "  |  ";
+        }
         if (request.retention == ResultRetention::all) {
             summary += tr(TextKey::all_results) + "  |  " + tr(TextKey::worst_memory) + ": " +
                 format_bytes(request.worst_result_bytes);

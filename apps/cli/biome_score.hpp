@@ -1,4 +1,4 @@
-/* CLI 私有的 26.2 群系重评分与挂机点搜索。 */
+/* CLI 私有的多版本群系重评分与挂机点搜索。 */
 #pragma once
 
 #include "slimeseeker/slimeseeker.h"

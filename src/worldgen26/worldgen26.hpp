@@ -1,4 +1,4 @@
-/* Minecraft 26.2 默认主世界群系采样器，仅供 CLI 第二阶段使用。 */
+/* Minecraft 主世界多版本群系采样器，仅供 CLI 第二阶段使用。 */
 #pragma once
 
 #include <cstdint>
