@@ -14,6 +14,7 @@ SlimeSeeker 是一个跨平台的 Minecraft Java Edition 史莱姆区块密度�
 - 提供稳定的版本化 C ABI，回调支持批量结果、进度、取消和主动终止；
 - 默认提供中英文 TUI 工作台，支持参数配置、实时进度、取消、分页结果与后台 CSV 导出；
 - 传统 CLI 支持确定性全量排序、无序流式输出、Top-K 保留、CSV 和基准模式；
+- `biome-score` 可按 Minecraft 26.2 默认主世界的三维群系刷怪权重重排全部命中，并搜索候选中心区块内的挂机点；
 - 包含朴素差分、后端一致性、并发契约、C ABI 和完整黄金回归测试。
 
 ## 构建
@@ -181,7 +182,37 @@ slimeseeker [OPTIONS] SEED RANGE [THRESHOLD]
 
 # 端到端吞吐测试，不输出命中列表
 ./build/slimeseeker --benchmark --threads 1 --backend scalar 0 5000 45
+
+# 对全部第一阶段命中进行 26.2 群系重评分，最终只保留前 20 个
+./build/slimeseeker biome-score --top 20 -f csv 12345 10000 45
 ```
+
+### Minecraft 26.2 群系重评分
+
+`biome-score` 是面向空置域、单层地狱门切门史莱姆农场选址的轻量第二阶段：
+
+```text
+slimeseeker biome-score [OPTIONS] SEED RANGE [THRESHOLD]
+```
+
+它保持第一阶段固定的 192 区块圆环和阈值不变，对每一个命中中心逐方块生成默认主世界群系。
+默认生成脚部高度为 `Y=-63`，每格权重为“史莱姆条目权重乘固定群组数 / MONSTER 总权重”。
+评分时流式处理全部命中，只保留最终群系分 Top-K（默认 20），因此不会先按旧的区块数量排序截断。
+
+最终 Top-K 会在中心区块的 16×16 个方块中心中搜索挂机 X/Z，玩家脚部默认 `Y=-38`。挂机分同时执行
+区块中心水平距离 `<128` 和生成脚部三维距离 `24² < d² <= 128²`；挂机点只作为每个候选的附加结果，
+不会再次改变群系排名。`--spawn-y Y`、`--player-y Y` 和 `--top K` 可覆盖默认值。
+
+CSV 列为：
+
+```text
+rank,x,z,count,biome_score,common_equivalent_chunks,player_x,player_y,player_z,afk_score
+```
+
+`biome_score` 和 `afk_score` 均以 256 个方块权重为一个区块单位；
+`common_equivalent_chunks` 再除以普通群系的 `400/515`，便于和未考虑群系的史莱姆区块数量比较。
+该模式固定对应 Minecraft 26.2 原版默认主世界和默认数据包，不读取存档或 Java/Fabric 导出文件。
+它不模拟群组随机游走、地狱门布局、高度图、结构覆盖、怪物容量、运输/击杀延迟或 items/hour。
 
 `auto` 只选择 CPU 搜索，并检测当前 CPU 能力，用短时对拍和中位数校准专用位图算子。只有 AVX2/NEON 算子结果与 scalar 完全一致且至少快 5% 时才会自动采用；显式请求硬件不支持的后端会返回 `SS_BACKEND_UNAVAILABLE`。
 

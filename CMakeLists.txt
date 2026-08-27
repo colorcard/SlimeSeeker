@@ -146,8 +146,11 @@ add_library(slimeseeker_worldgen26 STATIC
   src/worldgen26/third_party/cubiomes/biomes.c)
 target_include_directories(slimeseeker_worldgen26 PRIVATE src)
 
-add_executable(slimeseeker_cli apps/cli/main.cpp apps/cli/cli.cpp)
-target_include_directories(slimeseeker_cli PRIVATE apps/cli)
+add_executable(slimeseeker_cli
+  apps/cli/main.cpp
+  apps/cli/cli.cpp
+  apps/cli/biome_score.cpp)
+target_include_directories(slimeseeker_cli PRIVATE apps/cli src)
 if(SLIMESEEKER_BUILD_TUI)
   if(SLIMESEEKER_FTXUI_PROVIDER STREQUAL "system")
     find_package(ftxui 7.0 CONFIG REQUIRED)
@@ -172,7 +175,7 @@ else()
 endif()
 ss_enable_ipo(slimeseeker_cli)
 set_target_properties(slimeseeker_cli PROPERTIES OUTPUT_NAME slimeseeker)
-target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker)
+target_link_libraries(slimeseeker_cli PRIVATE SlimeSeeker::slimeseeker slimeseeker_worldgen26)
 
 include(GNUInstallDirs)
 install(TARGETS slimeseeker slimeseeker_cli EXPORT SlimeSeekerTargets
@@ -217,6 +220,10 @@ if(SLIMESEEKER_BUILD_TESTS)
   target_include_directories(slimeseeker_worldgen26_tests PRIVATE src)
   target_link_libraries(slimeseeker_worldgen26_tests PRIVATE slimeseeker_worldgen26)
   add_test(NAME worldgen26_tests COMMAND slimeseeker_worldgen26_tests)
+  add_test(NAME biome_score_cli
+    COMMAND ${CMAKE_COMMAND}
+      -DSLIMESEEKER_CLI=$<TARGET_FILE:slimeseeker_cli>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/biome_score.cmake)
   if(SLIMESEEKER_BUILD_TUI)
     add_executable(slimeseeker_tui_model_tests
       tests/unit/tui_model_tests.cpp apps/cli/tui_model.cpp)
