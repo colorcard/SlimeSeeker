@@ -38,7 +38,12 @@ enum class TextKey : size_t {
     density_mode, biome_mode, spawn_y, player_y, invalid_mode, invalid_biome_top_k,
     invalid_spawn_y, invalid_player_y, biome_score, common_chunks, afk_position,
     afk_score, afk_search, spawn_map, map_player, map_slime, map_inactive_slime,
-    map_spawn_area, map_spawn_edge, map_outside, map_equivalent, count_
+    map_spawn_area, map_spawn_edge, map_outside, map_equivalent, reset,
+    help_mode_density, help_mode_biome, help_seed, help_range, help_threshold,
+    help_threads, help_backend, help_retention, help_top_k, help_biome_top_k,
+    help_spawn_y, help_player_y, help_start, phase, phase_density, phase_biome,
+    afk_progress, cancel_exit_warning, export_partial_note, export_path_required,
+    exported_to, no_results_hint, worst_memory, count_
 };
 
 std::string_view localized_text(Language language, TextKey key);

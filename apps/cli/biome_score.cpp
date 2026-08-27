@@ -182,7 +182,8 @@ void BiomeScorer::consider(const ss_result &source) {
     }
 }
 
-std::vector<BiomeRankedResult> BiomeScorer::finish(const std::atomic<bool> *cancel) {
+std::vector<BiomeRankedResult> BiomeScorer::finish(const std::atomic<bool> *cancel,
+                                                    std::atomic<uint64_t> *completed_count) {
     std::vector<BiomeRankedResult> results;
     results.reserve(impl_->top.size());
     while (!impl_->top.empty()) {
@@ -190,12 +191,15 @@ std::vector<BiomeRankedResult> BiomeScorer::finish(const std::atomic<bool> *canc
         impl_->top.pop();
     }
     std::sort(results.begin(), results.end(), better);
-    size_t completed = 0;
+    if (completed_count) completed_count->store(0, std::memory_order_relaxed);
+    size_t completed_results = 0;
     for (auto &result : results) {
         if (!impl_->locate_player(result, cancel)) break;
-        ++completed;
+        ++completed_results;
+        if (completed_count)
+            completed_count->store(completed_results, std::memory_order_relaxed);
     }
-    results.resize(completed);
+    results.resize(completed_results);
     return results;
 }
 

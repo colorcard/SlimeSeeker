@@ -76,6 +76,13 @@ std::string coordinate_text(double value) {
     return buffer;
 }
 
+std::string grouped_integer(uint64_t value) {
+    std::string result = std::to_string(value);
+    for (size_t position = result.size(); position > 3; position -= 3)
+        result.insert(position - 3, ",");
+    return result;
+}
+
 struct RunState {
     SearchRequest request{};
     std::atomic<uint64_t> completed{0};
@@ -88,6 +95,7 @@ struct RunState {
     std::vector<ss_result> results;
     std::vector<BiomeRankedResult> biome_results;
     std::atomic<bool> biome_finalizing{false};
+    std::atomic<uint64_t> afk_completed{0};
     std::atomic<int> callback_status{SS_OK};
     std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 };
@@ -185,6 +193,7 @@ private:
         label_next_ = tr(TextKey::next);
         label_confirm_ = tr(TextKey::confirm);
         label_dismiss_ = tr(TextKey::dismiss);
+        label_reset_ = tr(TextKey::reset);
     }
 
     void build_components() {
@@ -201,9 +210,10 @@ private:
         mode_toggle_ = Toggle(&labels_mode_, &form_.mode);
         language_toggle_ = Toggle(&labels_language_, &language_selected_);
 
-        auto start_button = Button(&label_start_, [this] { begin_from_form(); }, ButtonOption::Simple());
-        auto quit_button = Button(&label_quit_, [this] { request_quit(); }, ButtonOption::Simple());
-        auto config_buttons = Container::Horizontal({start_button, quit_button});
+        start_button_ = Button(&label_start_, [this] { begin_from_form(); }, ButtonOption::Simple());
+        reset_button_ = Button(&label_reset_, [this] { reset_form(); }, ButtonOption::Simple());
+        quit_button_ = Button(&label_quit_, [this] { request_quit(); }, ButtonOption::Simple());
+        auto config_buttons = Container::Horizontal({start_button_, reset_button_, quit_button_});
         auto density_top_fields = Container::Tab(
             {top_k_input_, Container::Vertical({})}, &form_.retention);
         auto density_fields = Container::Vertical({retention_toggle_, density_top_fields});
@@ -213,7 +223,7 @@ private:
         config_container_ = Container::Vertical({mode_toggle_, seed_input_, range_input_, threshold_input_,
             threads_input_, backend_dropdown_, mode_fields, config_buttons});
 
-        config_page_ = Renderer(config_container_, [this, start_button, quit_button] {
+        config_page_ = Renderer(config_container_, [this] {
             std::vector<Element> fields = {
                 field_row(TextKey::search_mode, mode_toggle_), field_row(TextKey::seed, seed_input_),
                 field_row(TextKey::range, range_input_),
@@ -228,41 +238,45 @@ private:
                 if (form_.retention == 0) fields.push_back(field_row(TextKey::top_k, top_k_input_));
             }
             fields.push_back(separator());
-            if (!notice_.empty()) fields.push_back(text(notice_) | color(Color::Red));
-            fields.push_back(hbox({start_button->Render(), text("  "), quit_button->Render()}) | center);
+            const std::string summary = configuration_summary();
+            fields.push_back(text(summary.empty() ? " " : summary) | color(Color::Cyan));
+            fields.push_back(paragraph(notice_.empty() ? tr(focused_help_key()) : notice_) |
+                (notice_.empty() ? color(Color::GrayLight) : color(Color::Red)) |
+                size(HEIGHT, EQUAL, 2));
+            fields.push_back(hbox({start_button_->Render(), text("  "), reset_button_->Render(),
+                                   text("  "), quit_button_->Render()}) | center);
             return window(text(tr(TextKey::configure)) | bold, vbox(std::move(fields))) |
-                   size(WIDTH, LESS_THAN, 78) | center;
+                   size(WIDTH, EQUAL, 76) | center;
         });
 
-        auto cancel_button = Button(&label_cancel_, [this] { cancel_search(false); }, ButtonOption::Simple());
-        running_container_ = Container::Vertical({cancel_button});
-        running_page_ = Renderer(running_container_, [this, cancel_button] { return render_running(cancel_button); });
+        cancel_button_ = Button(&label_cancel_, [this] { cancel_search(false); }, ButtonOption::Simple());
+        running_container_ = Container::Vertical({cancel_button_});
+        running_page_ = Renderer(running_container_, [this] { return render_running(cancel_button_); });
 
         result_rows_.push_back(" ");
         result_menu_ = Menu(&result_rows_, &selected_result_);
-        auto previous_button = Button(&label_previous_, [this] { change_result_page(-1); });
-        auto next_button = Button(&label_next_, [this] { change_result_page(1); });
-        auto back_button = Button(&label_back_, [this] { page_ = Page::configure; page_index_ = 0; });
-        auto rerun_button = Button(&label_rerun_, [this] { rerun(); });
-        auto export_button = Button(&label_export_, [this] { open_export(); });
-        auto result_quit_button = Button(&label_quit_, [this] { request_quit(); });
-        result_container_ = Container::Vertical({result_menu_, previous_button, next_button,
-            back_button, rerun_button, export_button, result_quit_button});
-        results_page_ = Renderer(result_container_, [this, previous_button, next_button,
-            back_button, rerun_button, export_button, result_quit_button] {
-            return render_results(previous_button, next_button, back_button,
-                                  rerun_button, export_button, result_quit_button);
+        previous_button_ = Button(&label_previous_, [this] { change_result_page(-1); });
+        next_button_ = Button(&label_next_, [this] { change_result_page(1); });
+        back_button_ = Button(&label_back_, [this] { return_to_config(); });
+        rerun_button_ = Button(&label_rerun_, [this] { rerun(); });
+        export_button_ = Button(&label_export_, [this] { open_export(); });
+        result_quit_button_ = Button(&label_quit_, [this] { request_quit(); });
+        result_container_ = Container::Vertical({result_menu_, previous_button_, next_button_,
+            back_button_, rerun_button_, export_button_, result_quit_button_});
+        results_page_ = Renderer(result_container_, [this] {
+            return render_results(previous_button_, next_button_, back_button_,
+                                  rerun_button_, export_button_, result_quit_button_);
         });
 
         pages_ = Container::Tab({config_page_, running_page_, results_page_}, &page_index_);
         body_ = Container::Vertical({language_toggle_, pages_});
 
-        export_path_input_ = Input(&export_path_, "results.csv");
-        auto confirm_button = Button(&label_confirm_, [this] { confirm_dialog(); }, ButtonOption::Simple());
-        auto dismiss_button = Button(&label_dismiss_, [this] { dismiss_dialog(); });
-        dialog_container_ = Container::Vertical({export_path_input_, confirm_button, dismiss_button});
-        dialog_component_ = Renderer(dialog_container_, [this, confirm_button, dismiss_button] {
-            return render_dialog(confirm_button, dismiss_button);
+        export_path_input_ = Input(&export_path_, "");
+        confirm_button_ = Button(&label_confirm_, [this] { confirm_dialog(); }, ButtonOption::Simple());
+        dismiss_button_ = Button(&label_dismiss_, [this] { dismiss_dialog(); });
+        dialog_container_ = Container::Vertical({export_path_input_, confirm_button_, dismiss_button_});
+        dialog_component_ = Renderer(dialog_container_, [this] {
+            return render_dialog(confirm_button_, dismiss_button_);
         });
 
         root_ = Renderer(body_, [this] {
@@ -276,6 +290,11 @@ private:
         });
         root_ |= Modal(dialog_component_, &dialog_visible_);
         root_ |= CatchEvent([this](Event event) {
+            if (event == Event::Tab || event == Event::TabReverse)
+                return move_focus(event == Event::TabReverse);
+            if (page_ == Page::configure && !dialog_visible_ && !notice_.empty() &&
+                (event.is_character() || event == Event::Backspace || event == Event::Delete))
+                notice_.clear();
             if (event == Event::F5 && !dialog_visible_ && page_ == Page::configure) {
                 begin_from_form();
                 return true;
@@ -290,12 +309,12 @@ private:
                 return true;
             }
             if (page_ == Page::results) {
-                page_ = Page::configure;
-                page_index_ = 0;
+                return_to_config();
                 return true;
             }
             return false;
         });
+        mode_toggle_->TakeFocus();
     }
 
     Element field_row(TextKey label, const Component &component) const {
@@ -303,17 +322,145 @@ private:
                      component->Render() | flex}) | size(HEIGHT, EQUAL, 1);
     }
 
+    std::vector<Component> active_focus_order() const {
+        if (dialog_visible_) {
+            if (dialog_ == Dialog::export_path)
+                return {export_path_input_, confirm_button_, dismiss_button_};
+            if (dialog_ == Dialog::export_progress || dialog_ == Dialog::export_done)
+                return {confirm_button_};
+            return {confirm_button_, dismiss_button_};
+        }
+        if (page_ == Page::running) return {cancel_button_, language_toggle_};
+        if (page_ == Page::results) {
+            std::vector<Component> order;
+            if (result_count() != 0) order.push_back(result_menu_);
+            if (result_page_ > 0) order.push_back(previous_button_);
+            if (result_page_ + 1 < result_page_count()) order.push_back(next_button_);
+            order.push_back(back_button_);
+            order.push_back(rerun_button_);
+            if (result_count() != 0) order.push_back(export_button_);
+            order.push_back(result_quit_button_);
+            order.push_back(language_toggle_);
+            return order;
+        }
+
+        std::vector<Component> order{mode_toggle_, seed_input_, range_input_, threshold_input_,
+                                     threads_input_, backend_dropdown_};
+        if (form_.mode == 1) {
+            order.push_back(biome_top_k_input_);
+            order.push_back(spawn_y_input_);
+            order.push_back(player_y_input_);
+        } else {
+            order.push_back(retention_toggle_);
+            if (form_.retention == 0) order.push_back(top_k_input_);
+        }
+        order.push_back(start_button_);
+        order.push_back(reset_button_);
+        order.push_back(quit_button_);
+        order.push_back(language_toggle_);
+        return order;
+    }
+
+    bool move_focus(bool reverse) {
+        auto order = active_focus_order();
+        if (order.empty()) return false;
+        size_t current = order.size();
+        for (size_t i = 0; i < order.size(); ++i) {
+            if (order[i] && order[i]->Focused()) { current = i; break; }
+        }
+        const size_t next = current == order.size()
+            ? (reverse ? order.size() - 1 : 0)
+            : (reverse ? (current + order.size() - 1) % order.size()
+                       : (current + 1) % order.size());
+        order[next]->TakeFocus();
+        return true;
+    }
+
+    void focus_validation_error(ValidationError error) {
+        switch (error) {
+            case ValidationError::seed: seed_input_->TakeFocus(); break;
+            case ValidationError::range: range_input_->TakeFocus(); break;
+            case ValidationError::threshold: threshold_input_->TakeFocus(); break;
+            case ValidationError::threads: threads_input_->TakeFocus(); break;
+            case ValidationError::top_k: top_k_input_->TakeFocus(); break;
+            case ValidationError::biome_top_k: biome_top_k_input_->TakeFocus(); break;
+            case ValidationError::backend: backend_dropdown_->TakeFocus(); break;
+            case ValidationError::mode: mode_toggle_->TakeFocus(); break;
+            case ValidationError::spawn_y: spawn_y_input_->TakeFocus(); break;
+            case ValidationError::player_y: player_y_input_->TakeFocus(); break;
+            case ValidationError::none: break;
+        }
+    }
+
+    TextKey focused_help_key() const {
+        if (seed_input_->Focused()) return TextKey::help_seed;
+        if (range_input_->Focused()) return TextKey::help_range;
+        if (threshold_input_->Focused()) return TextKey::help_threshold;
+        if (threads_input_->Focused()) return TextKey::help_threads;
+        if (backend_dropdown_->Focused()) return TextKey::help_backend;
+        if (retention_toggle_->Focused()) return TextKey::help_retention;
+        if (top_k_input_->Focused()) return TextKey::help_top_k;
+        if (biome_top_k_input_->Focused()) return TextKey::help_biome_top_k;
+        if (spawn_y_input_->Focused()) return TextKey::help_spawn_y;
+        if (player_y_input_->Focused()) return TextKey::help_player_y;
+        if (start_button_->Focused() || reset_button_->Focused() || quit_button_->Focused())
+            return TextKey::help_start;
+        return form_.mode == 1 ? TextKey::help_mode_biome : TextKey::help_mode_density;
+    }
+
+    std::string configuration_summary() const {
+        const auto validation = validate_search_form(form_);
+        if (!validation) return {};
+        const auto &request = validation.request;
+        std::string summary = tr(TextKey::candidates) + ": " + grouped_integer(request.candidates) +
+            "  |  ";
+        if (request.retention == ResultRetention::all) {
+            summary += tr(TextKey::all_results) + "  |  " + tr(TextKey::worst_memory) + ": " +
+                format_bytes(request.worst_result_bytes);
+        } else {
+            summary += tr(TextKey::top_k) + ": " + grouped_integer(request.top_k);
+        }
+        return summary;
+    }
+
+    void reset_form() {
+        form_ = SearchForm{};
+        notice_.clear();
+        mode_toggle_->TakeFocus();
+    }
+
+    void return_to_config() {
+        page_ = Page::configure;
+        page_index_ = 0;
+        mode_toggle_->TakeFocus();
+    }
+
+    void show_dialog(Dialog dialog) {
+        dialog_ = dialog;
+        dialog_notice_.clear();
+        dialog_visible_ = true;
+        if (dialog == Dialog::export_path) export_path_input_->TakeFocus();
+        else confirm_button_->TakeFocus();
+    }
+
+    void restore_page_focus() {
+        if (page_ == Page::configure) mode_toggle_->TakeFocus();
+        else if (page_ == Page::running) cancel_button_->TakeFocus();
+        else if (result_count() != 0) result_menu_->TakeFocus();
+        else back_button_->TakeFocus();
+    }
+
     void begin_from_form() {
         notice_.clear();
         const auto validation = validate_search_form(form_);
         if (!validation) {
             notice_ = tr(validation_error_text(validation.error));
+            focus_validation_error(validation.error);
             return;
         }
         pending_request_ = validation.request;
         if (requires_memory_confirmation(pending_request_)) {
-            dialog_ = Dialog::memory;
-            dialog_visible_ = true;
+            show_dialog(Dialog::memory);
             return;
         }
         launch_search(pending_request_);
@@ -347,7 +494,7 @@ private:
                     if (status == SS_CALLBACK_ABORTED && callback_status != SS_OK) status = callback_status;
                     state->biome_finalizing.store(true, std::memory_order_relaxed);
                     app_.PostEvent(Event::Custom);
-                    state->biome_results = scorer.finish(&state->cancel);
+                    state->biome_results = scorer.finish(&state->cancel, &state->afk_completed);
                     if (state->cancel.load(std::memory_order_relaxed) && status == SS_OK)
                         status = SS_CANCELLED;
                     state->biome_finalizing.store(false, std::memory_order_relaxed);
@@ -387,40 +534,56 @@ private:
             result_page_ = 0;
             selected_result_ = 0;
             refresh_result_rows();
+            if (result_count() != 0) result_menu_->TakeFocus();
+            else back_button_->TakeFocus();
         }
         if (export_running_.load(std::memory_order_relaxed) &&
             export_done_.load(std::memory_order_acquire)) {
             if (export_worker_.joinable()) export_worker_.join();
             export_running_.store(false, std::memory_order_relaxed);
             refresh_active_.store(false, std::memory_order_relaxed);
-            dialog_ = Dialog::export_done;
-            dialog_visible_ = true;
+            show_dialog(Dialog::export_done);
         }
     }
 
     Element render_running(const Component &cancel_button) const {
         if (!run_) return text("");
+        const bool finalizing = run_->biome_finalizing.load(std::memory_order_relaxed);
         const uint64_t completed = run_->completed.load(std::memory_order_relaxed);
         const uint64_t total = run_->total.load(std::memory_order_relaxed);
         const uint64_t hits = run_->hits.load(std::memory_order_relaxed);
         const double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - run_->started).count();
-        const double fraction = total ? static_cast<double>(completed) / total : 0;
-        const double eta = completed ? elapsed * static_cast<double>(total - completed) / completed : -1;
+        const uint64_t afk_total = std::min<uint64_t>(hits, run_->request.top_k);
+        const uint64_t afk_done = run_->afk_completed.load(std::memory_order_relaxed);
+        const double fraction = finalizing
+            ? (afk_total ? static_cast<double>(afk_done) / afk_total : 1.0)
+            : (total ? static_cast<double>(completed) / total : 0);
+        const double eta = !finalizing && completed
+            ? elapsed * static_cast<double>(total - completed) / completed : -1;
         const double throughput = elapsed > 0 ? static_cast<double>(completed) / elapsed : 0;
         char speed[64];
         std::snprintf(speed, sizeof(speed), "%.3f G/s", throughput / 1e9);
         std::vector<Element> content{
+                metric(TextKey::phase, tr(finalizing ? TextKey::afk_search :
+                    (run_->request.mode == SearchMode::biome
+                        ? TextKey::phase_biome : TextKey::phase_density))),
                 gauge(std::clamp(fraction, 0.0, 1.0)) | color(Color::Green),
-                separator(),
-                metric(TextKey::progress, std::to_string(completed) + " / " + std::to_string(total)),
-                metric(TextKey::hits, std::to_string(hits)),
-                metric(TextKey::elapsed, seconds_text(elapsed)),
-                metric(TextKey::eta, seconds_text(eta)),
-                metric(TextKey::throughput, speed),
-                metric(TextKey::requested_backend, ss_backend_name(run_->request.options.backend))};
-        if (run_->biome_finalizing.load(std::memory_order_relaxed))
-            content.push_back(text(tr(TextKey::afk_search)) | bold | color(Color::Yellow) | center);
+                separator()};
+        if (finalizing) {
+            content.push_back(metric(TextKey::afk_progress,
+                std::to_string(afk_done) + " / " + std::to_string(afk_total)));
+            content.push_back(metric(TextKey::elapsed, seconds_text(elapsed)));
+        } else {
+            content.push_back(metric(TextKey::progress,
+                std::to_string(completed) + " / " + std::to_string(total)));
+            content.push_back(metric(TextKey::hits, std::to_string(hits)));
+            content.push_back(metric(TextKey::elapsed, seconds_text(elapsed)));
+            content.push_back(metric(TextKey::eta, seconds_text(eta)));
+            content.push_back(metric(TextKey::throughput, speed));
+            content.push_back(metric(TextKey::requested_backend,
+                ss_backend_name(run_->request.options.backend)));
+        }
         content.push_back(separator());
         content.push_back(cancel_button->Render() | center);
         return window(text(tr(TextKey::running)) | bold, vbox(std::move(content))) |
@@ -534,7 +697,12 @@ private:
             separator()
         };
         if (result_count() == 0) {
-            content.push_back(text(tr(TextKey::no_results)) | center | flex);
+            content.push_back(vbox({
+                filler(),
+                text(tr(TextKey::no_results)) | bold | center,
+                paragraph(tr(TextKey::no_results_hint)) | color(Color::GrayLight) | center,
+                filler()
+            }) | flex);
         } else if (run_->request.mode == SearchMode::biome) {
             const size_t index = result_page_ * kPageSize + static_cast<size_t>(selected_result_);
             if (index < run_->biome_results.size()) {
@@ -585,11 +753,15 @@ private:
             }
         }
         content.push_back(hbox({
-            previous_button->Render(), text(" "), next_button->Render(),
+            (result_page_ > 0 ? previous_button->Render() : previous_button->Render() | dim),
+            text(" "),
+            (result_page_ + 1 < result_page_count()
+                ? next_button->Render() : next_button->Render() | dim),
             text("  " + tr(TextKey::page) + " " + std::to_string(result_page_ + 1) + "/" +
                  std::to_string(result_page_count())), filler(),
             back_button->Render(), text(" "), rerun_button->Render(), text(" "),
-            export_button->Render(), text(" "), quit_button->Render()
+            (result_count() != 0 ? export_button->Render() : export_button->Render() | dim),
+            text(" "), quit_button->Render()
         }));
         return window(text(tr(TextKey::results)) | bold, vbox(std::move(content))) | flex;
     }
@@ -602,8 +774,7 @@ private:
 
     void request_quit() {
         if (page_ == Page::running && run_ && !run_->done.load(std::memory_order_acquire)) {
-            dialog_ = Dialog::quit_running;
-            dialog_visible_ = true;
+            show_dialog(Dialog::quit_running);
         } else {
             app_.Exit();
         }
@@ -618,8 +789,7 @@ private:
         const bool partial = run_->status.load(std::memory_order_relaxed) != SS_OK;
         export_path_ = default_export_filename(
             run_->request.params.world_seed, partial, run_->request.mode);
-        dialog_ = Dialog::export_path;
-        dialog_visible_ = true;
+        show_dialog(Dialog::export_path);
     }
 
     void start_export(bool overwrite) {
@@ -630,8 +800,7 @@ private:
         export_done_.store(false, std::memory_order_relaxed);
         export_running_.store(true, std::memory_order_relaxed);
         refresh_active_.store(true, std::memory_order_relaxed);
-        dialog_ = Dialog::export_progress;
-        dialog_visible_ = true;
+        show_dialog(Dialog::export_progress);
         auto state = run_;
         const std::filesystem::path path = export_path_;
         export_worker_ = std::thread([this, state, path, overwrite] {
@@ -654,9 +823,18 @@ private:
                 cancel_search(true);
                 break;
             case Dialog::export_path: {
+                if (export_path_.empty()) {
+                    dialog_notice_ = tr(TextKey::export_path_required);
+                    export_path_input_->TakeFocus();
+                    break;
+                }
                 std::error_code error;
-                if (std::filesystem::exists(export_path_, error) && !error) {
-                    dialog_ = Dialog::overwrite;
+                const bool exists = std::filesystem::exists(export_path_, error);
+                if (error) {
+                    dialog_notice_ = tr(TextKey::export_failed);
+                    export_path_input_->TakeFocus();
+                } else if (exists) {
+                    show_dialog(Dialog::overwrite);
                 } else {
                     start_export(false);
                 }
@@ -669,6 +847,7 @@ private:
             case Dialog::export_done:
                 dialog_ = Dialog::none;
                 dialog_visible_ = false;
+                restore_page_focus();
                 break;
             case Dialog::none: break;
         }
@@ -680,12 +859,14 @@ private:
         else {
             dialog_ = Dialog::none;
             dialog_visible_ = false;
+            restore_page_focus();
         }
     }
 
     Element render_dialog(const Component &confirm_button, const Component &dismiss_button) {
         std::string message;
-        bool show_path = false;
+        std::string secondary;
+        bool show_path_input = false;
         bool show_dismiss = true;
         switch (dialog_) {
             case Dialog::memory:
@@ -694,18 +875,19 @@ private:
                 label_confirm_ = tr(TextKey::confirm);
                 break;
             case Dialog::quit_running:
-                message = tr(TextKey::partial_warning);
+                message = tr(TextKey::cancel_exit_warning);
                 label_confirm_ = tr(TextKey::cancel);
                 break;
             case Dialog::export_path:
-                message = run_ && run_->status.load(std::memory_order_relaxed) != SS_OK
-                    ? tr(TextKey::partial_warning) : tr(TextKey::export_path);
-                show_path = true;
+                message = tr(TextKey::export_path);
+                if (run_ && run_->status.load(std::memory_order_relaxed) != SS_OK)
+                    secondary = tr(TextKey::export_partial_note);
+                show_path_input = true;
                 label_confirm_ = tr(TextKey::export_csv);
                 break;
             case Dialog::overwrite:
                 message = tr(TextKey::overwrite_warning);
-                show_path = true;
+                secondary = export_path_;
                 label_confirm_ = tr(TextKey::confirm);
                 break;
             case Dialog::export_progress: {
@@ -713,6 +895,7 @@ private:
                 const uint64_t total = result_count();
                 message = tr(TextKey::exporting) + "  " + std::to_string(done) + " / " +
                           std::to_string(total);
+                secondary = export_path_;
                 label_confirm_ = tr(TextKey::cancel);
                 show_dismiss = false;
                 break;
@@ -722,6 +905,8 @@ private:
                 message = status == ExportStatus::success ? tr(TextKey::export_success)
                     : status == ExportStatus::cancelled ? tr(TextKey::cancelled)
                     : tr(TextKey::export_failed);
+                if (status == ExportStatus::success)
+                    secondary = tr(TextKey::exported_to) + ": " + export_path_;
                 label_confirm_ = tr(TextKey::dismiss);
                 show_dismiss = false;
                 break;
@@ -729,13 +914,17 @@ private:
             case Dialog::none: break;
         }
         label_dismiss_ = tr(TextKey::dismiss);
-        std::vector<Element> content{text(message) | center, separator()};
-        if (show_path) content.push_back(hbox({text(tr(TextKey::export_path) + ": "),
-                                              export_path_input_->Render() | border | flex}));
+        std::vector<Element> content{paragraph(message) | center};
+        if (!secondary.empty()) content.push_back(paragraph(secondary) | color(Color::GrayLight) | center);
+        if (!dialog_notice_.empty())
+            content.push_back(paragraph(dialog_notice_) | color(Color::Red) | center);
+        content.push_back(separator());
+        if (show_path_input) content.push_back(hbox({text(tr(TextKey::export_path) + ": "),
+                                                    export_path_input_->Render() | border | flex}));
         content.push_back(hbox({confirm_button->Render(),
                                 show_dismiss ? hbox({text("  "), dismiss_button->Render()}) : text("")}) | center);
         return window(text("SlimeSeeker") | bold, vbox(std::move(content))) |
-               size(WIDTH, LESS_THAN, 70) | center;
+               size(WIDTH, EQUAL, 68) | center;
     }
 
     Language language_;
@@ -748,6 +937,7 @@ private:
     bool dialog_visible_ = false;
     bool exit_after_search_ = false;
     std::string notice_;
+    std::string dialog_notice_;
 
     std::vector<std::string> labels_language_{"English", "中文"};
     std::vector<std::string> labels_backend_;
@@ -755,11 +945,15 @@ private:
     std::vector<std::string> labels_mode_;
     std::string label_start_, label_quit_, label_cancel_, label_back_, label_rerun_;
     std::string label_export_, label_previous_, label_next_, label_confirm_, label_dismiss_;
+    std::string label_reset_;
 
     App app_;
     Component seed_input_, range_input_, threshold_input_, threads_input_, top_k_input_;
     Component biome_top_k_input_, spawn_y_input_, player_y_input_;
     Component backend_dropdown_, retention_toggle_, mode_toggle_, language_toggle_, export_path_input_;
+    Component start_button_, reset_button_, quit_button_, cancel_button_;
+    Component previous_button_, next_button_, back_button_, rerun_button_, export_button_;
+    Component result_quit_button_, confirm_button_, dismiss_button_;
     Component config_container_, running_container_, result_container_, dialog_container_;
     Component config_page_, running_page_, results_page_, pages_, body_, dialog_component_, root_;
 

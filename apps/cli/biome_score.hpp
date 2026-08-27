@@ -49,7 +49,8 @@ public:
     BiomeScorer &operator=(const BiomeScorer &) = delete;
 
     void consider(const ss_result &result);
-    std::vector<BiomeRankedResult> finish(const std::atomic<bool> *cancel = nullptr);
+    std::vector<BiomeRankedResult> finish(const std::atomic<bool> *cancel = nullptr,
+                                          std::atomic<uint64_t> *completed_count = nullptr);
 
 private:
     struct Impl;
