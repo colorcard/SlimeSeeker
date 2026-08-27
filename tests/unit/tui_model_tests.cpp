@@ -123,6 +123,41 @@ void test_result_collection() {
     }));
 }
 
+void test_spawn_map() {
+    CHECK(!afk_chunk_center_in_range(0, 0, -120.0, 8.0));
+    CHECK(afk_chunk_center_in_range(0, 0, -119.5, 8.0));
+    CHECK(!afk_spawn_position_in_range(24, 0, 0, 0.5, 0, 0.5));
+    CHECK(afk_spawn_position_in_range(25, 0, 0, 0.5, 0, 0.5));
+    CHECK(afk_spawn_position_in_range(128, 0, 0, 0.5, 0, 0.5));
+    CHECK(!afk_spawn_position_in_range(129, 0, 0, 0.5, 0, 0.5));
+
+    BiomeRankedResult result;
+    result.source = {14, 19, 37, 0};
+    result.player_x = 233.5;
+    result.player_y = -38;
+    result.player_z = 319.5;
+    const auto map = build_spawn_map(0, result, -63);
+    const auto &player = map[8 * 17 + 8];
+    CHECK(player.player);
+    CHECK(!player.candidate);
+    CHECK(player.spawnable_blocks == 0);
+
+    size_t candidates = 0;
+    size_t slime_chunks = 0;
+    for (const auto &cell : map) {
+        candidates += cell.candidate;
+        slime_chunks += cell.slime;
+        CHECK(!cell.slime || cell.candidate);
+        CHECK(cell.spawnable_blocks <= 256);
+    }
+    CHECK(candidates == SS_DONUT_CELLS);
+    CHECK(slime_chunks == result.source.count);
+    CHECK(!map.front().candidate);
+    CHECK(map[8 * 17 + 16].candidate);
+    CHECK(map[8 * 17 + 16].spawnable_blocks > 0);
+    CHECK(map[8 * 17 + 16].spawnable_blocks < 256);
+}
+
 void test_export() {
     const std::vector<ss_result> results{{1, -2, 45, 0}, {3, 4, 44, 0}};
     const auto path = unique_path("export");
@@ -167,6 +202,7 @@ int main() {
     test_translations_and_locale();
     test_validation();
     test_result_collection();
+    test_spawn_map();
     test_export();
     if (failures) std::cerr << failures << " TUI model checks failed\n";
     return failures ? 1 : 0;

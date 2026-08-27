@@ -104,19 +104,14 @@ struct BiomeScorer::Impl {
         uint64_t score = 0;
         const double player_x = player_block_x + 0.5;
         const double player_z = player_block_z + 0.5;
-        const double dy = static_cast<double>(spawn_y - player_y);
         for (const auto &chunk : chunks) {
-            const double center_dx = chunk.x * 16.0 + 8.0 - player_x;
-            const double center_dz = chunk.z * 16.0 + 8.0 - player_z;
-            if (center_dx * center_dx + center_dz * center_dz >= 128.0 * 128.0) continue;
+            if (!afk_chunk_center_in_range(chunk.x, chunk.z, player_x, player_z)) continue;
             const int32_t base_x = chunk.x * 16;
             const int32_t base_z = chunk.z * 16;
             for (int32_t z = 0; z < 16; ++z) {
                 for (int32_t x = 0; x < 16; ++x) {
-                    const double dx = base_x + x + 0.5 - player_x;
-                    const double dz = base_z + z + 0.5 - player_z;
-                    const double distance2 = dx * dx + dy * dy + dz * dz;
-                    if (distance2 > 24.0 * 24.0 && distance2 <= 128.0 * 128.0)
+                    if (afk_spawn_position_in_range(base_x + x, spawn_y, base_z + z,
+                                                    player_x, player_y, player_z))
                         score += chunk.ratio[static_cast<size_t>(z * 16 + x)];
                 }
             }

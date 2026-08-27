@@ -8,6 +8,7 @@
 #include "biome_score.hpp"
 #include "slimeseeker/slimeseeker.h"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -36,7 +37,8 @@ enum class TextKey : size_t {
     avx2_backend, neon_backend, cuda_backend, top_results, search_mode,
     density_mode, biome_mode, spawn_y, player_y, invalid_mode, invalid_biome_top_k,
     invalid_spawn_y, invalid_player_y, biome_score, common_chunks, afk_position,
-    afk_score, afk_search, count_
+    afk_score, afk_search, spawn_map, map_player, map_slime, map_inactive_slime,
+    map_spawn_area, map_spawn_edge, map_outside, map_equivalent, count_
 };
 
 std::string_view localized_text(Language language, TextKey key);
@@ -84,6 +86,16 @@ bool requires_memory_confirmation(const SearchRequest &request);
 TextKey validation_error_text(ValidationError error);
 std::string format_bytes(uint64_t bytes);
 std::string default_export_filename(int64_t seed, bool partial, SearchMode mode = SearchMode::density);
+
+struct SpawnMapCell {
+    bool candidate = false;
+    bool slime = false;
+    bool player = false;
+    uint16_t spawnable_blocks = 0;
+};
+
+using SpawnMap = std::array<SpawnMapCell, 17 * 17>;
+SpawnMap build_spawn_map(int64_t seed, const BiomeRankedResult &result, int32_t spawn_y);
 
 struct BetterResult {
     bool operator()(const ss_result &a, const ss_result &b) const;

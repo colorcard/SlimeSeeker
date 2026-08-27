@@ -431,6 +431,10 @@ private:
         return hbox({text(tr(label)) | size(WIDTH, EQUAL, 22), text(std::move(value)) | bold});
     }
 
+    Element compact_metric(TextKey label, std::string value) const {
+        return hbox({text(tr(label) + ":"), filler(), text(std::move(value)) | bold});
+    }
+
     void refresh_result_rows() {
         result_rows_.clear();
         if (!run_) { result_rows_.push_back(" "); return; }
@@ -440,9 +444,9 @@ private:
             char row[160];
             if (run_->request.mode == SearchMode::biome) {
                 const auto &result = run_->biome_results[i];
-                std::snprintf(row, sizeof(row), "%6zu  %10d  %10d  %5u  %8.3f  %8.3f", i + 1,
+                std::snprintf(row, sizeof(row), "%3zu %9d %9d %3u %7.2f", i + 1,
                               result.source.x, result.source.z, result.source.count,
-                              result.biome_score, result.common_equivalent_chunks);
+                              result.biome_score);
             } else {
                 const auto &result = run_->results[i];
                 std::snprintf(row, sizeof(row), "%6zu  %11d  %11d  %5u", i + 1,
@@ -471,6 +475,48 @@ private:
         refresh_result_rows();
     }
 
+    static Color spawn_map_color(const SpawnMapCell &cell) {
+        if (cell.player) return Color::MagentaLight;
+        if (!cell.candidate) return Color::Black;
+        if (cell.slime) {
+            if (cell.spawnable_blocks == 0) return Color::Red;
+            return cell.spawnable_blocks == 256 ? Color::GreenLight : Color::Green;
+        }
+        if (cell.spawnable_blocks == 0) return Color::GrayDark;
+        return cell.spawnable_blocks == 256 ? Color::BlueLight : Color::Cyan;
+    }
+
+    Element map_legend(Color color_value, TextKey label) const {
+        return hbox({text("██") | color(color_value), text(" " + tr(label))});
+    }
+
+    Element render_spawn_map(const BiomeRankedResult &result) const {
+        const auto map = build_spawn_map(run_->request.params.world_seed, result,
+                                         run_->request.spawn_y);
+        std::vector<Element> rows;
+        rows.reserve(14);
+        rows.push_back(hbox({text(tr(TextKey::spawn_map)) | bold, filler(), text("N ^")}));
+        for (size_t z = 0; z < 17; z += 2) {
+            std::vector<Element> pixels;
+            pixels.reserve(17);
+            for (size_t x = 0; x < 17; ++x) {
+                const Color upper = spawn_map_color(map[z * 17 + x]);
+                const Color lower = z + 1 < 17
+                    ? spawn_map_color(map[(z + 1) * 17 + x]) : Color::Black;
+                pixels.push_back(text("▀▀") | color(upper) | bgcolor(lower));
+            }
+            rows.push_back(hbox(std::move(pixels)));
+        }
+        rows.push_back(separator());
+        rows.push_back(hbox({map_legend(Color::MagentaLight, TextKey::map_player), filler(),
+                             map_legend(Color::GreenLight, TextKey::map_slime)}));
+        rows.push_back(hbox({map_legend(Color::Red, TextKey::map_inactive_slime), filler(),
+                             map_legend(Color::BlueLight, TextKey::map_spawn_area)}));
+        rows.push_back(hbox({map_legend(Color::Cyan, TextKey::map_spawn_edge), filler(),
+                             map_legend(Color::GrayDark, TextKey::map_outside)}));
+        return vbox(std::move(rows)) | size(WIDTH, EQUAL, 38);
+    }
+
     Element render_results(const Component &previous_button, const Component &next_button,
                            const Component &back_button, const Component &rerun_button,
                            const Component &export_button, const Component &quit_button) const {
@@ -489,13 +535,9 @@ private:
         };
         if (result_count() == 0) {
             content.push_back(text(tr(TextKey::no_results)) | center | flex);
-        } else {
-            content.push_back(text(run_->request.mode == SearchMode::biome
-                ? "  #       X           Z       Count   Biome    Common"
-                : "  #       X            Z      Count") | dim);
-            content.push_back(result_menu_->Render() | frame | flex | border);
+        } else if (run_->request.mode == SearchMode::biome) {
             const size_t index = result_page_ * kPageSize + static_cast<size_t>(selected_result_);
-            if (run_->request.mode == SearchMode::biome && index < run_->biome_results.size()) {
+            if (index < run_->biome_results.size()) {
                 const auto &result = run_->biome_results[index];
                 const int64_t x0 = static_cast<int64_t>(result.source.x) * 16;
                 const int64_t z0 = static_cast<int64_t>(result.source.z) * 16;
@@ -503,17 +545,32 @@ private:
                 std::snprintf(biome, sizeof(biome), "%.9f", result.biome_score);
                 std::snprintf(common, sizeof(common), "%.9f", result.common_equivalent_chunks);
                 std::snprintf(afk, sizeof(afk), "%.9f", result.afk_score);
-                content.push_back(window(text(tr(TextKey::details)), vbox({
-                    metric(TextKey::block_bounds, "X " + std::to_string(x0) + ".." +
-                        std::to_string(x0 + 15) + ", Z " + std::to_string(z0) + ".." +
-                        std::to_string(z0 + 15)),
-                    metric(TextKey::biome_score, biome),
-                    metric(TextKey::common_chunks, common),
-                    metric(TextKey::afk_position, "(" + coordinate_text(result.player_x) + ", " +
-                        coordinate_text(result.player_y) + ", " + coordinate_text(result.player_z) + ")"),
-                    metric(TextKey::afk_score, afk)
-                })));
-            } else if (index < run_->results.size()) {
+                auto details = window(text(tr(TextKey::details)), vbox({
+                    text("X " + std::to_string(x0) + ".." + std::to_string(x0 + 15) +
+                         "  Z " + std::to_string(z0) + ".." + std::to_string(z0 + 15)),
+                    compact_metric(TextKey::biome_score, biome),
+                    compact_metric(TextKey::map_equivalent, common),
+                    hbox({text("AFK:"), filler(),
+                        text("(" + coordinate_text(result.player_x) + ", " +
+                             coordinate_text(result.player_y) + ", " +
+                             coordinate_text(result.player_z) + ")") | bold}),
+                    compact_metric(TextKey::afk_score, afk)
+                }));
+                content.push_back(hbox({
+                    vbox({
+                        text(" #         X         Z   N   Score") | dim,
+                        result_menu_->Render() | frame | flex | border,
+                        std::move(details)
+                    }) | flex,
+                    separator(),
+                    render_spawn_map(result)
+                }) | flex);
+            }
+        } else {
+            content.push_back(text("  #       X            Z      Count") | dim);
+            content.push_back(result_menu_->Render() | frame | flex | border);
+            const size_t index = result_page_ * kPageSize + static_cast<size_t>(selected_result_);
+            if (index < run_->results.size()) {
                 const auto &result = run_->results[index];
                 const int64_t distance = static_cast<int64_t>(result.x) * result.x +
                                          static_cast<int64_t>(result.z) * result.z;

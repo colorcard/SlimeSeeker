@@ -227,7 +227,7 @@ if(SLIMESEEKER_BUILD_TESTS)
   if(SLIMESEEKER_BUILD_TUI)
     add_executable(slimeseeker_tui_model_tests
       tests/unit/tui_model_tests.cpp apps/cli/tui_model.cpp)
-    target_include_directories(slimeseeker_tui_model_tests PRIVATE apps/cli)
+    target_include_directories(slimeseeker_tui_model_tests PRIVATE apps/cli src)
     target_link_libraries(slimeseeker_tui_model_tests PRIVATE SlimeSeeker::slimeseeker)
     add_test(NAME tui_model_tests COMMAND slimeseeker_tui_model_tests)
     add_test(NAME tui_requires_terminal

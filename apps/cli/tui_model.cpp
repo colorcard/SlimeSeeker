@@ -1,6 +1,8 @@
 /* SlimeSeeker TUI 的输入、结果与导出模型实现。 */
 #include "tui_model.hpp"
 
+#include "core/domain.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -50,7 +52,9 @@ std::string_view localized_text(Language language, TextKey key) {
         "Search mode", "Chunk density", "26.2 biome score", "Spawn feet Y", "Player feet Y",
         "Select a valid search mode", "Biome Top-K must be 1..1000",
         "Spawn Y must be -64..319", "Player Y must be -64..319", "Biome score",
-        "Common-equivalent chunks", "AFK position", "AFK score", "Finding AFK points"
+        "Common-equivalent chunks", "AFK position", "AFK score", "Finding AFK points",
+        "Slime chunks / AFK annulus", "AFK chunk", "Active slime", "Inactive slime",
+        "Spawn area", "Boundary", "Outside annulus", "Equivalent"
     };
     static constexpr std::string_view zh[] = {
         "SlimeSeeker", "搜索配置", "世界种子", "搜索范围", "阈值", "线程数", "计算后端",
@@ -68,7 +72,8 @@ std::string_view localized_text(Language language, TextKey key) {
         "区块密度", "26.2 群系评分", "生成脚部 Y", "玩家脚部 Y", "请选择有效搜索模式",
         "群系最佳 K 条必须为 1..1000", "生成 Y 必须为 -64..319",
         "玩家 Y 必须为 -64..319", "群系分", "普通群系等效区块", "挂机坐标",
-        "挂机分", "正在寻找挂机点"
+        "挂机分", "正在寻找挂机点", "史莱姆区块 / 挂机圆环", "挂机区块",
+        "有效史莱姆", "无效史莱姆", "可生成区", "圆环边界", "圆环外", "等效区块"
     };
     static_assert(std::size(en) == static_cast<size_t>(TextKey::count_));
     static_assert(std::size(zh) == static_cast<size_t>(TextKey::count_));
@@ -189,6 +194,35 @@ std::string default_export_filename(int64_t seed, bool partial, SearchMode mode)
     const std::string suffix = mode == SearchMode::biome ? "-biome" : "";
     return "slimeseeker-seed-" + std::to_string(seed) + suffix +
            (partial ? "-partial.csv" : "-results.csv");
+}
+
+SpawnMap build_spawn_map(int64_t seed, const BiomeRankedResult &result, int32_t spawn_y) {
+    SpawnMap map{};
+    for (int dz = -8; dz <= 8; ++dz) {
+        for (int dx = -8; dx <= 8; ++dx) {
+            auto &cell = map[static_cast<size_t>(dz + 8) * 17 + static_cast<size_t>(dx + 8)];
+            cell.player = dx == 0 && dz == 0;
+            cell.candidate = in_donut(dx, dz);
+            if (!cell.candidate) continue;
+
+            const int32_t chunk_x = result.source.x + dx;
+            const int32_t chunk_z = result.source.z + dz;
+            cell.slime = is_slime(seed, chunk_x, chunk_z);
+            if (!afk_chunk_center_in_range(chunk_x, chunk_z, result.player_x, result.player_z))
+                continue;
+
+            const int64_t base_x = static_cast<int64_t>(chunk_x) * 16;
+            const int64_t base_z = static_cast<int64_t>(chunk_z) * 16;
+            for (int z = 0; z < 16; ++z) {
+                for (int x = 0; x < 16; ++x) {
+                    if (afk_spawn_position_in_range(base_x + x, spawn_y, base_z + z,
+                                                    result.player_x, result.player_y, result.player_z))
+                        ++cell.spawnable_blocks;
+                }
+            }
+        }
+    }
+    return map;
 }
 
 bool BetterResult::operator()(const ss_result &a, const ss_result &b) const {
