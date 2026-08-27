@@ -137,6 +137,15 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(slimeseeker PRIVATE Threads::Threads)
 
+add_library(slimeseeker_worldgen26 STATIC
+  src/worldgen26/worldgen26.cpp
+  src/worldgen26/cubiomes_bridge.c
+  src/worldgen26/third_party/cubiomes/biomenoise.c
+  src/worldgen26/third_party/cubiomes/noise.c
+  src/worldgen26/third_party/cubiomes/layers.c
+  src/worldgen26/third_party/cubiomes/biomes.c)
+target_include_directories(slimeseeker_worldgen26 PRIVATE src)
+
 add_executable(slimeseeker_cli apps/cli/main.cpp apps/cli/cli.cpp)
 target_include_directories(slimeseeker_cli PRIVATE apps/cli)
 if(SLIMESEEKER_BUILD_TUI)
@@ -185,6 +194,8 @@ if(SLIMESEEKER_BUILD_TUI)
   install(FILES licenses/FTXUI.txt
     DESTINATION ${CMAKE_INSTALL_DATADIR}/slimeseeker/licenses)
 endif()
+install(FILES licenses/Cubiomes.txt
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/slimeseeker/licenses)
 
 if(SLIMESEEKER_BUILD_TESTS)
   enable_testing()
@@ -202,6 +213,10 @@ if(SLIMESEEKER_BUILD_TESTS)
   set_target_properties(slimeseeker_c_api_smoke PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(slimeseeker_c_api_smoke PRIVATE SlimeSeeker::slimeseeker)
   add_test(NAME c_api_smoke COMMAND slimeseeker_c_api_smoke)
+  add_executable(slimeseeker_worldgen26_tests tests/unit/worldgen26_tests.cpp)
+  target_include_directories(slimeseeker_worldgen26_tests PRIVATE src)
+  target_link_libraries(slimeseeker_worldgen26_tests PRIVATE slimeseeker_worldgen26)
+  add_test(NAME worldgen26_tests COMMAND slimeseeker_worldgen26_tests)
   if(SLIMESEEKER_BUILD_TUI)
     add_executable(slimeseeker_tui_model_tests
       tests/unit/tui_model_tests.cpp apps/cli/tui_model.cpp)
