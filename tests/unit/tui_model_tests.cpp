@@ -55,6 +55,15 @@ void test_validation() {
     CHECK(result.request.retention == ResultRetention::top);
     CHECK(!requires_memory_confirmation(result.request));
 
+    form.mode = 1;
+    result = validate_search_form(form);
+    CHECK(result && result.request.mode == SearchMode::biome);
+    CHECK(result.request.retention == ResultRetention::top);
+    CHECK(result.request.top_k == 20);
+    CHECK(result.request.spawn_y == -63 && result.request.player_y == -38);
+    CHECK(!requires_memory_confirmation(result.request));
+
+    form = {};
     form.retention = 1;
     result = validate_search_form(form);
     CHECK(result && result.request.retention == ResultRetention::all);
@@ -76,6 +85,16 @@ void test_validation() {
     CHECK(validate_search_form(form).error == ValidationError::top_k);
     form = {}; form.backend = 5;
     CHECK(validate_search_form(form).error == ValidationError::backend);
+    form = {}; form.mode = 2;
+    CHECK(validate_search_form(form).error == ValidationError::mode);
+    form = {}; form.mode = 1; form.biome_top_k = "1001";
+    CHECK(validate_search_form(form).error == ValidationError::biome_top_k);
+    form = {}; form.mode = 1; form.spawn_y = "-65";
+    CHECK(validate_search_form(form).error == ValidationError::spawn_y);
+    form = {}; form.mode = 1; form.player_y = "320";
+    CHECK(validate_search_form(form).error == ValidationError::player_y);
+    form = {}; form.mode = 1; form.range = "134217720";
+    CHECK(validate_search_form(form).error == ValidationError::range);
 }
 
 void test_result_collection() {
@@ -124,6 +143,23 @@ void test_export() {
     std::filesystem::remove(path);
     CHECK(default_export_filename(-12, false) == "slimeseeker-seed--12-results.csv");
     CHECK(default_export_filename(-12, true) == "slimeseeker-seed--12-partial.csv");
+
+    BiomeRankedResult biome;
+    biome.source = {14, 19, 37, 0};
+    biome.biome_score = 28.649557977;
+    biome.common_equivalent_chunks = 36.886305895;
+    biome.player_x = 233.5;
+    biome.player_y = -38;
+    biome.player_z = 319.5;
+    biome.afk_score = 27.755076368;
+    const auto biome_path = unique_path("biome-export");
+    CHECK(export_biome_csv_file(biome_path, {biome}, false) == ExportStatus::success);
+    CHECK(read_file(biome_path) ==
+        "rank,x,z,count,biome_score,common_equivalent_chunks,player_x,player_y,player_z,afk_score\n"
+        "1,14,19,37,28.649557977,36.886305895,233.5,-38,319.5,27.755076368\n");
+    CHECK(default_export_filename(-12, false, SearchMode::biome) ==
+          "slimeseeker-seed--12-biome-results.csv");
+    std::filesystem::remove(biome_path);
 }
 } // namespace
 

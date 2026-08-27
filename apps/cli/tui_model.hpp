@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include "biome_score.hpp"
 #include "slimeseeker/slimeseeker.h"
 
 #include <atomic>
@@ -20,6 +21,7 @@ namespace ss::cli {
 
 enum class Language { english, chinese };
 enum class ResultRetention { top, all };
+enum class SearchMode { density, biome };
 
 enum class TextKey : size_t {
     app_title, configure, seed, range, threshold, threads, backend, result_mode,
@@ -31,7 +33,10 @@ enum class TextKey : size_t {
     export_path, exporting, export_success, export_failed, partial_warning,
     overwrite_warning, no_results, sorting, language, status, requested_backend,
     partial_results, page, previous, next, details, auto_backend, scalar_backend,
-    avx2_backend, neon_backend, cuda_backend, top_results, count_
+    avx2_backend, neon_backend, cuda_backend, top_results, search_mode,
+    density_mode, biome_mode, spawn_y, player_y, invalid_mode, invalid_biome_top_k,
+    invalid_spawn_y, invalid_player_y, biome_score, common_chunks, afk_position,
+    afk_score, afk_search, count_
 };
 
 std::string_view localized_text(Language language, TextKey key);
@@ -43,19 +48,27 @@ struct SearchForm {
     std::string threshold = "45";
     std::string threads = "0";
     std::string top_k = "1000";
+    std::string biome_top_k = "20";
+    std::string spawn_y = "-63";
+    std::string player_y = "-38";
     int backend = 0;
     int retention = 0;
+    int mode = 0;
 };
 
 enum class ValidationError {
-    none, seed, range, threshold, threads, top_k, backend
+    none, seed, range, threshold, threads, top_k, biome_top_k, backend, mode,
+    spawn_y, player_y
 };
 
 struct SearchRequest {
     ss_search_params_v1 params{};
     ss_search_options_v1 options{};
+    SearchMode mode = SearchMode::density;
     ResultRetention retention = ResultRetention::top;
     size_t top_k = 1000;
+    int32_t spawn_y = -63;
+    int32_t player_y = -38;
     uint64_t candidates = 0;
     uint64_t worst_result_bytes = 0;
 };
@@ -70,7 +83,7 @@ ValidationResult validate_search_form(const SearchForm &form);
 bool requires_memory_confirmation(const SearchRequest &request);
 TextKey validation_error_text(ValidationError error);
 std::string format_bytes(uint64_t bytes);
-std::string default_export_filename(int64_t seed, bool partial);
+std::string default_export_filename(int64_t seed, bool partial, SearchMode mode = SearchMode::density);
 
 struct BetterResult {
     bool operator()(const ss_result &a, const ss_result &b) const;
@@ -97,5 +110,10 @@ ExportStatus export_csv_file(const std::filesystem::path &path,
                              bool overwrite,
                              const std::atomic<bool> *cancel = nullptr,
                              std::atomic<uint64_t> *completed = nullptr);
+ExportStatus export_biome_csv_file(const std::filesystem::path &path,
+                                   const std::vector<BiomeRankedResult> &results,
+                                   bool overwrite,
+                                   const std::atomic<bool> *cancel = nullptr,
+                                   std::atomic<uint64_t> *completed = nullptr);
 
 } // namespace ss::cli

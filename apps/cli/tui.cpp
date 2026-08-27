@@ -70,6 +70,12 @@ std::string seconds_text(double seconds) {
     return buffer;
 }
 
+std::string coordinate_text(double value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.1f", value);
+    return buffer;
+}
+
 struct RunState {
     SearchRequest request{};
     std::atomic<uint64_t> completed{0};
@@ -80,18 +86,35 @@ struct RunState {
     std::atomic<int> status{SS_INTERNAL_ERROR};
     std::atomic<double> elapsed{0};
     std::vector<ss_result> results;
+    std::vector<BiomeRankedResult> biome_results;
+    std::atomic<bool> biome_finalizing{false};
+    std::atomic<int> callback_status{SS_OK};
     std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 };
 
 struct CallbackContext {
     RunState *state;
     ResultCollector *collector;
+    BiomeScorer *biome_scorer;
 };
 
 int collect_results(void *opaque, const ss_result *results, size_t count) {
     auto &context = *static_cast<CallbackContext *>(opaque);
-    context.collector->add(results, count);
-    context.state->hits.store(context.collector->total_hits(), std::memory_order_relaxed);
+    try {
+        if (context.biome_scorer) {
+            for (size_t i = 0; i < count; ++i) context.biome_scorer->consider(results[i]);
+            context.state->hits.fetch_add(count, std::memory_order_relaxed);
+        } else {
+            context.collector->add(results, count);
+            context.state->hits.store(context.collector->total_hits(), std::memory_order_relaxed);
+        }
+    } catch (const std::bad_alloc &) {
+        context.state->callback_status.store(SS_OUT_OF_MEMORY, std::memory_order_relaxed);
+        return 1;
+    } catch (...) {
+        context.state->callback_status.store(SS_INTERNAL_ERROR, std::memory_order_relaxed);
+        return 1;
+    }
     return 0;
 }
 
@@ -151,6 +174,7 @@ private:
                            tr(TextKey::avx2_backend), tr(TextKey::neon_backend),
                            tr(TextKey::cuda_backend)};
         labels_retention_ = {tr(TextKey::top_results), tr(TextKey::all_results)};
+        labels_mode_ = {tr(TextKey::density_mode), tr(TextKey::biome_mode)};
         label_start_ = tr(TextKey::start);
         label_quit_ = tr(TextKey::quit);
         label_cancel_ = tr(TextKey::cancel);
@@ -169,22 +193,40 @@ private:
         threshold_input_ = Input(&form_.threshold, "45");
         threads_input_ = Input(&form_.threads, "0");
         top_k_input_ = Input(&form_.top_k, "1000");
+        biome_top_k_input_ = Input(&form_.biome_top_k, "20");
+        spawn_y_input_ = Input(&form_.spawn_y, "-63");
+        player_y_input_ = Input(&form_.player_y, "-38");
         backend_dropdown_ = Toggle(&labels_backend_, &form_.backend);
         retention_toggle_ = Toggle(&labels_retention_, &form_.retention);
+        mode_toggle_ = Toggle(&labels_mode_, &form_.mode);
         language_toggle_ = Toggle(&labels_language_, &language_selected_);
 
         auto start_button = Button(&label_start_, [this] { begin_from_form(); }, ButtonOption::Simple());
         auto quit_button = Button(&label_quit_, [this] { request_quit(); }, ButtonOption::Simple());
         auto config_buttons = Container::Horizontal({start_button, quit_button});
-        config_container_ = Container::Vertical({seed_input_, range_input_, threshold_input_,
-            threads_input_, backend_dropdown_, retention_toggle_, top_k_input_, config_buttons});
+        auto density_top_fields = Container::Tab(
+            {top_k_input_, Container::Vertical({})}, &form_.retention);
+        auto density_fields = Container::Vertical({retention_toggle_, density_top_fields});
+        auto biome_fields = Container::Vertical(
+            {biome_top_k_input_, spawn_y_input_, player_y_input_});
+        auto mode_fields = Container::Tab({density_fields, biome_fields}, &form_.mode);
+        config_container_ = Container::Vertical({mode_toggle_, seed_input_, range_input_, threshold_input_,
+            threads_input_, backend_dropdown_, mode_fields, config_buttons});
 
         config_page_ = Renderer(config_container_, [this, start_button, quit_button] {
             std::vector<Element> fields = {
-                field_row(TextKey::seed, seed_input_), field_row(TextKey::range, range_input_),
+                field_row(TextKey::search_mode, mode_toggle_), field_row(TextKey::seed, seed_input_),
+                field_row(TextKey::range, range_input_),
                 field_row(TextKey::threshold, threshold_input_), field_row(TextKey::threads, threads_input_),
-                field_row(TextKey::backend, backend_dropdown_), field_row(TextKey::result_mode, retention_toggle_)};
-            if (form_.retention == 0) fields.push_back(field_row(TextKey::top_k, top_k_input_));
+                field_row(TextKey::backend, backend_dropdown_)};
+            if (form_.mode == 1) {
+                fields.push_back(field_row(TextKey::top_k, biome_top_k_input_));
+                fields.push_back(field_row(TextKey::spawn_y, spawn_y_input_));
+                fields.push_back(field_row(TextKey::player_y, player_y_input_));
+            } else {
+                fields.push_back(field_row(TextKey::result_mode, retention_toggle_));
+                if (form_.retention == 0) fields.push_back(field_row(TextKey::top_k, top_k_input_));
+            }
             fields.push_back(separator());
             if (!notice_.empty()) fields.push_back(text(notice_) | color(Color::Red));
             fields.push_back(hbox({start_button->Render(), text("  "), quit_button->Render()}) | center);
@@ -291,19 +333,41 @@ private:
         exit_after_search_ = false;
         auto state = run_;
         search_worker_ = std::thread([this, state] {
-            ResultCollector collector(state->request.retention, state->request.top_k);
-            CallbackContext context{state.get(), &collector};
-            ss_callbacks_v1 callbacks{sizeof(callbacks), &context,
-                collect_results, collect_progress, collect_cancel};
             ss_status status = SS_INTERNAL_ERROR;
             try {
-                status = ss_search(&state->request.params, &state->request.options, &callbacks);
-                state->results = collector.finish();
+                if (state->request.mode == SearchMode::biome) {
+                    BiomeScorer scorer(state->request.params.world_seed, state->request.top_k,
+                                       state->request.spawn_y, state->request.player_y);
+                    CallbackContext context{state.get(), nullptr, &scorer};
+                    ss_callbacks_v1 callbacks{sizeof(callbacks), &context,
+                        collect_results, collect_progress, collect_cancel};
+                    status = ss_search(&state->request.params, &state->request.options, &callbacks);
+                    const auto callback_status = static_cast<ss_status>(
+                        state->callback_status.load(std::memory_order_relaxed));
+                    if (status == SS_CALLBACK_ABORTED && callback_status != SS_OK) status = callback_status;
+                    state->biome_finalizing.store(true, std::memory_order_relaxed);
+                    app_.PostEvent(Event::Custom);
+                    state->biome_results = scorer.finish(&state->cancel);
+                    if (state->cancel.load(std::memory_order_relaxed) && status == SS_OK)
+                        status = SS_CANCELLED;
+                    state->biome_finalizing.store(false, std::memory_order_relaxed);
+                } else {
+                    ResultCollector collector(state->request.retention, state->request.top_k);
+                    CallbackContext context{state.get(), &collector, nullptr};
+                    ss_callbacks_v1 callbacks{sizeof(callbacks), &context,
+                        collect_results, collect_progress, collect_cancel};
+                    status = ss_search(&state->request.params, &state->request.options, &callbacks);
+                    const auto callback_status = static_cast<ss_status>(
+                        state->callback_status.load(std::memory_order_relaxed));
+                    if (status == SS_CALLBACK_ABORTED && callback_status != SS_OK) status = callback_status;
+                    state->results = collector.finish();
+                }
             } catch (const std::bad_alloc &) {
                 status = SS_OUT_OF_MEMORY;
             } catch (...) {
                 status = SS_INTERNAL_ERROR;
             }
+            state->biome_finalizing.store(false, std::memory_order_relaxed);
             const double elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - state->started).count();
             state->elapsed.store(elapsed, std::memory_order_relaxed);
@@ -346,8 +410,7 @@ private:
         const double throughput = elapsed > 0 ? static_cast<double>(completed) / elapsed : 0;
         char speed[64];
         std::snprintf(speed, sizeof(speed), "%.3f G/s", throughput / 1e9);
-        return window(text(tr(TextKey::running)) | bold,
-            vbox({
+        std::vector<Element> content{
                 gauge(std::clamp(fraction, 0.0, 1.0)) | color(Color::Green),
                 separator(),
                 metric(TextKey::progress, std::to_string(completed) + " / " + std::to_string(total)),
@@ -355,9 +418,13 @@ private:
                 metric(TextKey::elapsed, seconds_text(elapsed)),
                 metric(TextKey::eta, seconds_text(eta)),
                 metric(TextKey::throughput, speed),
-                metric(TextKey::requested_backend, ss_backend_name(run_->request.options.backend)),
-                separator(), cancel_button->Render() | center
-            })) | size(WIDTH, LESS_THAN, 76) | center;
+                metric(TextKey::requested_backend, ss_backend_name(run_->request.options.backend))};
+        if (run_->biome_finalizing.load(std::memory_order_relaxed))
+            content.push_back(text(tr(TextKey::afk_search)) | bold | color(Color::Yellow) | center);
+        content.push_back(separator());
+        content.push_back(cancel_button->Render() | center);
+        return window(text(tr(TextKey::running)) | bold, vbox(std::move(content))) |
+               size(WIDTH, LESS_THAN, 76) | center;
     }
 
     Element metric(TextKey label, std::string value) const {
@@ -368,12 +435,19 @@ private:
         result_rows_.clear();
         if (!run_) { result_rows_.push_back(" "); return; }
         const size_t begin = result_page_ * kPageSize;
-        const size_t end = std::min(run_->results.size(), begin + kPageSize);
+        const size_t end = std::min(result_count(), begin + kPageSize);
         for (size_t i = begin; i < end; ++i) {
-            const auto &result = run_->results[i];
-            char row[128];
-            std::snprintf(row, sizeof(row), "%6zu  %11d  %11d  %5u", i + 1,
-                          result.x, result.z, result.count);
+            char row[160];
+            if (run_->request.mode == SearchMode::biome) {
+                const auto &result = run_->biome_results[i];
+                std::snprintf(row, sizeof(row), "%6zu  %10d  %10d  %5u  %8.3f  %8.3f", i + 1,
+                              result.source.x, result.source.z, result.source.count,
+                              result.biome_score, result.common_equivalent_chunks);
+            } else {
+                const auto &result = run_->results[i];
+                std::snprintf(row, sizeof(row), "%6zu  %11d  %11d  %5u", i + 1,
+                              result.x, result.z, result.count);
+            }
             result_rows_.emplace_back(row);
         }
         if (result_rows_.empty()) result_rows_.push_back(" ");
@@ -381,7 +455,13 @@ private:
     }
 
     size_t result_page_count() const {
-        return !run_ || run_->results.empty() ? 1 : (run_->results.size() + kPageSize - 1) / kPageSize;
+        return result_count() == 0 ? 1 : (result_count() + kPageSize - 1) / kPageSize;
+    }
+
+    size_t result_count() const {
+        if (!run_) return 0;
+        return run_->request.mode == SearchMode::biome
+            ? run_->biome_results.size() : run_->results.size();
     }
 
     void change_result_page(int delta) {
@@ -403,17 +483,37 @@ private:
             : status == SS_CANCELLED ? Color::Yellow : Color::Red;
         std::vector<Element> content = {
             hbox({text(tr(TextKey::status) + ": "), text(status_text) | bold | color(status_color),
-                  filler(), text(tr(TextKey::retained) + ": " + std::to_string(run_->results.size()) +
+                  filler(), text(tr(TextKey::retained) + ": " + std::to_string(result_count()) +
                   " / " + std::to_string(run_->hits.load(std::memory_order_relaxed)))}),
             separator()
         };
-        if (run_->results.empty()) {
+        if (result_count() == 0) {
             content.push_back(text(tr(TextKey::no_results)) | center | flex);
         } else {
-            content.push_back(text("  #       X            Z      Count") | dim);
+            content.push_back(text(run_->request.mode == SearchMode::biome
+                ? "  #       X           Z       Count   Biome    Common"
+                : "  #       X            Z      Count") | dim);
             content.push_back(result_menu_->Render() | frame | flex | border);
             const size_t index = result_page_ * kPageSize + static_cast<size_t>(selected_result_);
-            if (index < run_->results.size()) {
+            if (run_->request.mode == SearchMode::biome && index < run_->biome_results.size()) {
+                const auto &result = run_->biome_results[index];
+                const int64_t x0 = static_cast<int64_t>(result.source.x) * 16;
+                const int64_t z0 = static_cast<int64_t>(result.source.z) * 16;
+                char biome[64], common[64], afk[64];
+                std::snprintf(biome, sizeof(biome), "%.9f", result.biome_score);
+                std::snprintf(common, sizeof(common), "%.9f", result.common_equivalent_chunks);
+                std::snprintf(afk, sizeof(afk), "%.9f", result.afk_score);
+                content.push_back(window(text(tr(TextKey::details)), vbox({
+                    metric(TextKey::block_bounds, "X " + std::to_string(x0) + ".." +
+                        std::to_string(x0 + 15) + ", Z " + std::to_string(z0) + ".." +
+                        std::to_string(z0 + 15)),
+                    metric(TextKey::biome_score, biome),
+                    metric(TextKey::common_chunks, common),
+                    metric(TextKey::afk_position, "(" + coordinate_text(result.player_x) + ", " +
+                        coordinate_text(result.player_y) + ", " + coordinate_text(result.player_z) + ")"),
+                    metric(TextKey::afk_score, afk)
+                })));
+            } else if (index < run_->results.size()) {
                 const auto &result = run_->results[index];
                 const int64_t distance = static_cast<int64_t>(result.x) * result.x +
                                          static_cast<int64_t>(result.z) * result.z;
@@ -457,9 +557,10 @@ private:
     }
 
     void open_export() {
-        if (!run_ || run_->results.empty()) return;
+        if (!run_ || result_count() == 0) return;
         const bool partial = run_->status.load(std::memory_order_relaxed) != SS_OK;
-        export_path_ = default_export_filename(run_->request.params.world_seed, partial);
+        export_path_ = default_export_filename(
+            run_->request.params.world_seed, partial, run_->request.mode);
         dialog_ = Dialog::export_path;
         dialog_visible_ = true;
     }
@@ -477,8 +578,11 @@ private:
         auto state = run_;
         const std::filesystem::path path = export_path_;
         export_worker_ = std::thread([this, state, path, overwrite] {
-            const auto status = export_csv_file(path, state->results, overwrite,
-                                                &export_cancel_, &export_completed_);
+            const auto status = state->request.mode == SearchMode::biome
+                ? export_biome_csv_file(path, state->biome_results, overwrite,
+                                        &export_cancel_, &export_completed_)
+                : export_csv_file(path, state->results, overwrite,
+                                  &export_cancel_, &export_completed_);
             export_status_.store(static_cast<int>(status), std::memory_order_relaxed);
             export_done_.store(true, std::memory_order_release);
             app_.PostEvent(Event::Custom);
@@ -549,7 +653,7 @@ private:
                 break;
             case Dialog::export_progress: {
                 const uint64_t done = export_completed_.load(std::memory_order_relaxed);
-                const uint64_t total = run_ ? run_->results.size() : 0;
+                const uint64_t total = result_count();
                 message = tr(TextKey::exporting) + "  " + std::to_string(done) + " / " +
                           std::to_string(total);
                 label_confirm_ = tr(TextKey::cancel);
@@ -591,12 +695,14 @@ private:
     std::vector<std::string> labels_language_{"English", "中文"};
     std::vector<std::string> labels_backend_;
     std::vector<std::string> labels_retention_;
+    std::vector<std::string> labels_mode_;
     std::string label_start_, label_quit_, label_cancel_, label_back_, label_rerun_;
     std::string label_export_, label_previous_, label_next_, label_confirm_, label_dismiss_;
 
     App app_;
     Component seed_input_, range_input_, threshold_input_, threads_input_, top_k_input_;
-    Component backend_dropdown_, retention_toggle_, language_toggle_, export_path_input_;
+    Component biome_top_k_input_, spawn_y_input_, player_y_input_;
+    Component backend_dropdown_, retention_toggle_, mode_toggle_, language_toggle_, export_path_input_;
     Component config_container_, running_container_, result_container_, dialog_container_;
     Component config_page_, running_page_, results_page_, pages_, body_, dialog_component_, root_;
 

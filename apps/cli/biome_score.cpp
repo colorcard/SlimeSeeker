@@ -82,10 +82,11 @@ struct BiomeScorer::Impl {
         return chunks;
     }
 
-    std::vector<ChunkCells> load_cells(const std::vector<std::pair<int32_t, int32_t>> &chunks) {
-        std::vector<ChunkCells> result;
+    bool load_cells(const std::vector<std::pair<int32_t, int32_t>> &chunks,
+                    std::vector<ChunkCells> &result, const std::atomic<bool> *cancel) {
         result.reserve(chunks.size());
         for (const auto &[chunk_x, chunk_z] : chunks) {
+            if (cancel && cancel->load(std::memory_order_relaxed)) return false;
             ChunkCells cells{chunk_x, chunk_z, {}};
             const int32_t base_x = chunk_x * 16;
             const int32_t base_z = chunk_z * 16;
@@ -95,7 +96,7 @@ struct BiomeScorer::Impl {
                         spawn_ratio_q32(world.biome_at_block(base_x + x, spawn_y, base_z + z));
             result.push_back(std::move(cells));
         }
-        return result;
+        return true;
     }
 
     uint64_t afk_score(const std::vector<ChunkCells> &chunks,
@@ -123,14 +124,16 @@ struct BiomeScorer::Impl {
         return score;
     }
 
-    void locate_player(BiomeRankedResult &result) {
-        const auto chunks = load_cells(slime_chunks(result.source));
+    bool locate_player(BiomeRankedResult &result, const std::atomic<bool> *cancel) {
+        std::vector<ChunkCells> chunks;
+        if (!load_cells(slime_chunks(result.source), chunks, cancel)) return false;
         const int32_t base_x = result.source.x * 16;
         const int32_t base_z = result.source.z * 16;
         uint64_t best = 0;
         bool found = false;
         int32_t best_x = base_x, best_z = base_z;
         for (int32_t z = 0; z < 16; ++z) {
+            if (cancel && cancel->load(std::memory_order_relaxed)) return false;
             for (int32_t x = 0; x < 16; ++x) {
                 const uint64_t score = afk_score(chunks, base_x + x, base_z + z);
                 if (!found || score > best) {
@@ -146,6 +149,7 @@ struct BiomeScorer::Impl {
         result.player_z = best_z + 0.5;
         result.afk_score_q32 = best;
         result.afk_score = static_cast<double>(best) / (4294967296.0 * 256.0);
+        return true;
     }
 
     int64_t seed;
@@ -183,7 +187,7 @@ void BiomeScorer::consider(const ss_result &source) {
     }
 }
 
-std::vector<BiomeRankedResult> BiomeScorer::finish() {
+std::vector<BiomeRankedResult> BiomeScorer::finish(const std::atomic<bool> *cancel) {
     std::vector<BiomeRankedResult> results;
     results.reserve(impl_->top.size());
     while (!impl_->top.empty()) {
@@ -191,7 +195,12 @@ std::vector<BiomeRankedResult> BiomeScorer::finish() {
         impl_->top.pop();
     }
     std::sort(results.begin(), results.end(), better);
-    for (auto &result : results) impl_->locate_player(result);
+    size_t completed = 0;
+    for (auto &result : results) {
+        if (!impl_->locate_player(result, cancel)) break;
+        ++completed;
+    }
+    results.resize(completed);
     return results;
 }
 

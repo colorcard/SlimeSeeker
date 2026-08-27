@@ -3,6 +3,7 @@
 
 #include "slimeseeker/slimeseeker.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -32,7 +33,7 @@ public:
     BiomeScorer &operator=(const BiomeScorer &) = delete;
 
     void consider(const ss_result &result);
-    std::vector<BiomeRankedResult> finish();
+    std::vector<BiomeRankedResult> finish(const std::atomic<bool> *cancel = nullptr);
 
 private:
     struct Impl;
