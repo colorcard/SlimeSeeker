@@ -1,6 +1,6 @@
 # SlimeSeeker 顶层构建入口：定义核心库、CLI、测试、基准和安装导出。
 cmake_minimum_required(VERSION 3.24)
-project(SlimeSeeker VERSION 1.1.0 LANGUAGES C CXX)
+project(SlimeSeeker VERSION 1.2.0 LANGUAGES C CXX)
 
 option(SLIMESEEKER_BUILD_TESTS "Build tests" ON)
 option(SLIMESEEKER_BUILD_BENCHMARKS "Build benchmarks" ON)

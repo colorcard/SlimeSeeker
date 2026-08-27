@@ -13,7 +13,7 @@ int main(void) {
     ss_search_options_v1 options = {
         sizeof(ss_search_options_v1), 1, SS_BACKEND_SCALAR, 16
     };
-    if (SS_API_VERSION != 1u || strcmp(ss_version(), "1.1.0") != 0) return 1;
+    if (SS_API_VERSION != 1u || strcmp(ss_version(), "1.2.0") != 0) return 1;
     if (!ss_backend_available(SS_BACKEND_SCALAR)) return 2;
     return ss_search(&params, &options, 0) == SS_OK ? 0 : 3;
 }
