@@ -6,6 +6,7 @@
 #include "cli.hpp"
 #include "tui.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 #if defined(_WIN32)
