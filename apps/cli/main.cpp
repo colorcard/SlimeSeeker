@@ -8,8 +8,26 @@
 
 #include <cstring>
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+
+namespace {
+void configure_windows_utf8_console() {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+}
+} // namespace
+#endif
+
 int main(int argc, char **argv) {
-    if (argc == 1) return ss::cli::run_tui();
-    if (argc == 2 && std::strcmp(argv[1], "--tui") == 0) return ss::cli::run_tui();
+    const bool tui = argc == 1 || (argc == 2 && std::strcmp(argv[1], "--tui") == 0);
+#if defined(_WIN32)
+    if (tui) configure_windows_utf8_console();
+#endif
+    if (tui) return ss::cli::run_tui();
     return ss::cli::run_command_line(argc, argv);
 }
