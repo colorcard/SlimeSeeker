@@ -154,7 +154,7 @@ void test_api_validation() {
     CHECK(ss_search(&params, nullptr, nullptr) == SS_INVALID_ARGUMENT);
     params.threshold = 0; params.x_begin = 2; params.x_end = 1;
     CHECK(ss_search(&params, nullptr, nullptr) == SS_INVALID_ARGUMENT);
-    CHECK(std::string(ss_version()) == "1.2.0");
+    CHECK(std::string(ss_version()) == "1.2.1");
 }
 
 struct ControlContext {
